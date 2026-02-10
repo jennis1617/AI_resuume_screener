@@ -15,6 +15,7 @@ from PIL import Image
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
+from urllib.parse import urlparse, unquote
 
 # --------------------------------------------------
 # ENV CONFIG (BACKEND ONLY)
@@ -94,7 +95,7 @@ def extract_text_from_file(uploaded_file):
     try:
         if ext == "pdf":
             reader = PyPDF2.PdfReader(uploaded_file)
-            return "\n".join([p.extract_text() for p in reader.pages])
+            return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
         if ext == "docx":
             return docx2txt.process(uploaded_file)
         if ext in ["png", "jpg", "jpeg"]:
@@ -159,17 +160,30 @@ Return ranked JSON list with strengths & gaps as bullet points.
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        results = json.loads(res.choices[0].message.content)
-        return results
+        return json.loads(res.choices[0].message.content)
     except:
         return []
 
 def convert_df_to_csv(df):
     return df.to_csv(index=False).encode("utf-8")
 
-def upload_to_sharepoint_logic(df):
-    # Placeholder – credentials already loaded from env
-    return True
+# --------------------------------------------------
+# SHAREPOINT HELPERS (PLACEHOLDER)
+# --------------------------------------------------
+def extract_sharepoint_folder_path(sp_url):
+    parsed = urlparse(sp_url)
+    path = unquote(parsed.path)
+    if "Shared Documents" in path:
+        return path.split("Shared Documents/")[-1]
+    return ""
+
+def list_sharepoint_files(folder_path):
+    # TODO: Replace with Graph API call
+    return []
+
+def download_sharepoint_file(file_id):
+    # TODO: Replace with Graph API call
+    return None
 
 # --------------------------------------------------
 # MAIN APP
@@ -212,17 +226,54 @@ def main():
 
     # ---------------- UPLOAD ----------------
     with tabs[0]:
-        files = st.file_uploader("Upload Resumes", type=["pdf", "docx", "png", "jpg"], accept_multiple_files=True)
-        if st.button("Process Resumes") and client and files:
+        st.subheader("Resume Source")
+
+        source = st.radio(
+            "Choose resume source",
+            ["Local Upload", "SharePoint Folder"],
+            horizontal=True
+        )
+
+        files = None
+        sharepoint_url = None
+
+        if source == "Local Upload":
+            files = st.file_uploader(
+                "Upload Resumes",
+                type=["pdf", "docx", "png", "jpg"],
+                accept_multiple_files=True
+            )
+        else:
+            sharepoint_url = st.text_input(
+                "SharePoint Folder URL",
+                placeholder="https://company.sharepoint.com/sites/HR/Shared Documents/Resumes"
+            )
+            st.caption("🔒 Access handled securely using backend credentials")
+
+            if sharepoint_url and "sharepoint.com" not in sharepoint_url:
+                st.error("Please enter a valid SharePoint URL")
+
+        if st.button("Process Resumes") and client:
             st.session_state.parsed_resumes.clear()
-            for f in files:
-                txt = extract_text_from_file(f)
-                parsed = parse_resume_with_groq(client, txt, f.name, mask_pii_enabled)
-                if parsed:
-                    st.session_state.parsed_resumes.append(parsed)
-                    st.session_state.resume_texts[parsed["name"]] = txt
-            st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-            st.success("Resumes processed")
+
+            if source == "Local Upload" and files:
+                for f in files:
+                    txt = extract_text_from_file(f)
+                    parsed = parse_resume_with_groq(client, txt, f.name, mask_pii_enabled)
+                    if parsed:
+                        st.session_state.parsed_resumes.append(parsed)
+                        st.session_state.resume_texts[parsed["name"]] = txt
+
+            elif source == "SharePoint Folder" and sharepoint_url:
+                folder_path = extract_sharepoint_folder_path(sharepoint_url)
+                st.info(f"Reading resumes from SharePoint folder: {folder_path}")
+                st.warning("SharePoint file fetching not implemented yet")
+
+            if st.session_state.parsed_resumes:
+                st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
+                st.success("Resumes processed")
+            else:
+                st.warning("No resumes processed")
 
     # ---------------- DATABASE ----------------
     with tabs[1]:
@@ -234,7 +285,7 @@ def main():
     # ---------------- MATCH ----------------
     with tabs[2]:
         jd_text = st.text_area("Paste Job Description")
-        if st.button("Rank Candidates") and client:
+        if st.button("Rank Candidates") and client and st.session_state.candidates_df is not None:
             st.session_state.matched_results = match_candidates_with_jd(
                 client, st.session_state.candidates_df, jd_text, top_n
             )
