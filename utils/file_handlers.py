@@ -1,15 +1,11 @@
 """
-File Handling Utilities
+File handling utilities for PDF and DOCX extraction
 """
 
 import streamlit as st
 import PyPDF2
 import docx2txt
-from config.settings import OCR_AVAILABLE
-
-if OCR_AVAILABLE:
-    import pytesseract
-    from PIL import Image
+import io
 
 def extract_text_from_pdf(pdf_file):
     """Extract text from PDF file"""
@@ -32,34 +28,19 @@ def extract_text_from_docx(docx_file):
         st.error(f"Error reading DOCX: {str(e)}")
         return ""
 
-def extract_text_from_image(image_file):
-    """Extracts text from images using OCR"""
-    if not OCR_AVAILABLE:
-        st.error("OCR not available. Install with: pip install pytesseract pillow")
-        return ""
-    
-    try:
-        image = Image.open(image_file)
-        text = pytesseract.image_to_string(image)
-        return text
-    except Exception as e:
-        st.error(f"Error reading image with OCR: {str(e)}")
-        return ""
-
 def extract_text_from_file(uploaded_file):
-    """Extract text from PDF, DOCX, or Images"""
-    file_ext = uploaded_file.name.split('.')[-1].lower()
+    """Extract text from PDF or DOCX only"""
+    if isinstance(uploaded_file, dict):  # SharePoint file
+        file_ext = uploaded_file['name'].split('.')[-1].lower()
+        file_content = io.BytesIO(uploaded_file['content'])
+    else:  # Regular upload
+        file_ext = uploaded_file.name.split('.')[-1].lower()
+        file_content = uploaded_file
     
     if file_ext == 'pdf':
-        return extract_text_from_pdf(uploaded_file)
-    elif file_ext in ['docx', 'doc']:
-        return extract_text_from_docx(uploaded_file)
-    elif file_ext in ['png', 'jpg', 'jpeg']:
-        if OCR_AVAILABLE:
-            return extract_text_from_image(uploaded_file)
-        else:
-            st.warning(f"OCR not available for {uploaded_file.name}. Skipping...")
-            return ""
+        return extract_text_from_pdf(file_content)
+    elif file_ext == 'docx':
+        return extract_text_from_docx(file_content)
     else:
-        st.error(f"Unsupported file type: {file_ext}")
+        st.warning(f"⚠️ Unsupported file format: {file_ext}. Please upload PDF or DOCX files only.")
         return ""

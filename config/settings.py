@@ -1,29 +1,6 @@
 """
-Configuration Settings
+Application settings and configuration
 """
-
-# Check for optional dependencies
-try:
-    import pytesseract
-    from PIL import Image
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
-
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    TFIDF_AVAILABLE = True
-except ImportError:
-    TFIDF_AVAILABLE = False
-
-try:
-    from office365.sharepoint.client_context import ClientContext
-    from office365.runtime.auth.user_credential import UserCredential
-    from office365.sharepoint.caml_query import CamlQuery
-    SHAREPOINT_AVAILABLE = True
-except ImportError:
-    SHAREPOINT_AVAILABLE = False
 
 # Page Configuration
 PAGE_CONFIG = {
@@ -36,21 +13,6 @@ PAGE_CONFIG = {
 # Custom CSS
 CUSTOM_CSS = """
     <style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 20px 0;
-    }
-    .sub-header {
-        text-align: center;
-        color: #555;
-        font-size: 1.2rem;
-        margin-bottom: 30px;
-    }
     .stButton>button {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -59,68 +21,102 @@ CUSTOM_CSS = """
         border-radius: 8px;
         font-weight: 600;
     }
-    .logo-container {
-        text-align: center;
-        padding: 20px 0;
+    .strength-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        background: #d4edda;
+        border-left: 4px solid #28a745;
+        border-radius: 4px;
     }
-    .logo-container img {
-        max-width: 200px;
-        height: auto;
+    .weakness-item {
+        padding: 8px 12px;
+        margin: 5px 0;
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        border-radius: 4px;
+    }
+    /* Better table styling */
+    .dataframe {
+        font-size: 14px;
+    }
+    .dataframe th {
+        background-color: #667eea;
+        color: white;
+        font-weight: 600;
+        padding: 12px;
+        text-align: left;
+    }
+    .dataframe td {
+        padding: 10px;
+        border-bottom: 1px solid #ddd;
     }
     </style>
 """
 
 # Job Description Templates
 JD_TEMPLATES = {
-    "Senior Python Dev": """Senior Python Developer - 5+ years
+    "Senior Python Developer": """Senior Python Developer - 5+ years
 
-Required:
-- 5+ years Python
-- FastAPI/Django/Flask
-- AWS (Lambda, EC2, S3)
-- Docker, Kubernetes
+Required Skills:
+- 5+ years of Python development experience
+- FastAPI, Django, or Flask frameworks
+- AWS services (Lambda, EC2, S3, RDS)
+- Docker and Kubernetes
 - PostgreSQL/MongoDB
-- CI/CD pipelines
+- CI/CD pipelines (Jenkins, GitLab CI, GitHub Actions)
 
 Responsibilities:
-- Design scalable backends
-- Lead architecture
-- Mentor developers
-- Production deployment""",
+- Design and build scalable backend systems
+- Lead technical architecture decisions
+- Mentor junior developers
+- Manage production deployments
+- Code reviews and best practices""",
     
-    "Data Scientist": """Data Scientist - ML Focus
+    "Data Scientist": """Data Scientist - ML/AI Focus
 
-Required:
-- 3+ years ML/AI
+Required Skills:
+- 3+ years in Machine Learning/AI
 - Python (NumPy, Pandas, Scikit-learn)
-- TensorFlow/PyTorch
-- SQL, data warehousing
+- TensorFlow or PyTorch
+- SQL and data warehousing
 - Statistical analysis
-- Gen AI experience (plus)
+- Generative AI experience (preferred)
 
 Responsibilities:
-- Build ML models
-- Large-scale data analysis
-- A/B testing""",
+- Build and deploy ML models
+- Perform large-scale data analysis
+- A/B testing and experimentation
+- Collaborate with engineering teams""",
     
     "DevOps Engineer": """DevOps Engineer - Cloud Infrastructure
 
-Required:
-- 4+ years DevOps
-- AWS/Azure/GCP
-- Terraform, Ansible
-- Docker, Kubernetes
-- CI/CD (Jenkins, GitLab)
+Required Skills:
+- 4+ years DevOps experience
+- AWS/Azure/GCP expertise
+- Kubernetes, Docker, Terraform
+- CI/CD automation
 - Monitoring (Prometheus, Grafana)
+- Scripting (Python, Bash)
 
 Responsibilities:
-- Infrastructure automation
-- Pipeline optimization
-- System reliability"""
+- Manage cloud infrastructure
+- Automate deployment pipelines
+- Ensure system reliability
+- Security and compliance"""
 }
 
-# Groq Model Configuration
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_TEMPERATURE_PARSING = 0.1
-GROQ_TEMPERATURE_MATCHING = 0.3
-GROQ_TEMPERATURE_QUESTIONS = 0.4
+# Column Display Names
+COLUMN_DISPLAY_NAMES = {
+    'name': 'Candidate Name',
+    'email': 'Email Address',
+    'phone': 'Phone Number',
+    'experience_years': 'Experience (Years)',
+    'tech_stack': 'Technical Skills',
+    'current_role': 'Current Role',
+    'education': 'Education',
+    'key_projects': 'Key Projects',
+    'certifications': 'Certifications',
+    'domain_expertise': 'Domain Expertise',
+    'submission_date': 'Submission Date',
+    'filename': 'Resume File'
+}
