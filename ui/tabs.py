@@ -1,5 +1,5 @@
 """
-UI Tab rendering functions
+UI Tab rendering functions - UPDATED WITH UI IMPROVEMENTS
 """
 
 import streamlit as st
@@ -198,7 +198,7 @@ def render_upload_tab():
         col1, col2 = st.columns([2, 1])
         with col1:
             uploaded_files = st.file_uploader(
-                "Upload Resumes",
+                "Upload Resumes (PDF or DOCX only)",
                 type=['pdf', 'docx'],
                 accept_multiple_files=True,
                 help="Upload resumes in PDF or DOCX format only"
@@ -284,7 +284,7 @@ def render_upload_tab():
                         st.write(f"**Skills:** {resume.get('tech_stack', '')[:80]}...")
 
 def render_database_tab():
-    """Render the Candidate Pool tab"""
+    """Render the Candidate Pool tab - UPDATED UI"""
     from config.settings import COLUMN_DISPLAY_NAMES
     
     st.header("Candidate Database")
@@ -297,76 +297,129 @@ def render_database_tab():
     if st.session_state.candidates_df is not None:
         df = st.session_state.candidates_df.copy()
         
+        # Total candidates is the complete database count
+        total_candidates_count = len(st.session_state.candidates_df)
+        
         # Apply date filter if enabled
+        filtered_df = df.copy()
         if use_date_filter and start_date and end_date:
             try:
-                df['submission_date'] = pd.to_datetime(df['submission_date'])
-                df = df[(df['submission_date'].dt.date >= start_date) & (df['submission_date'].dt.date <= end_date)]
-                st.info(f"📅 Showing {len(df)} resumes from {start_date} to {end_date}")
+                filtered_df['submission_date'] = pd.to_datetime(filtered_df['submission_date'])
+                filtered_df = filtered_df[(filtered_df['submission_date'].dt.date >= start_date) & 
+                                         (filtered_df['submission_date'].dt.date <= end_date)]
             except:
                 pass
         
-        col1, col2, col3 = st.columns(3)
+        # UPDATED METRICS - Removed Average Experience
+        col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Candidates", len(st.session_state.candidates_df))
+            st.metric("Total Candidates", total_candidates_count, help="Total resumes in database")
         with col2:
-            st.metric("In Date Range", len(df) if use_date_filter else len(st.session_state.candidates_df))
-        with col3:
-            avg_exp = df['experience_years'].astype(float).mean()
-            st.metric("Average Experience", f"{avg_exp:.1f} years")
+            in_range_count = len(filtered_df) if use_date_filter else total_candidates_count
+            st.metric("In Date Range", in_range_count, help="Candidates matching date filter")
         
         st.divider()
         
-        # Professional instruction box for column selection
+        # Professional instruction box - Light colors
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        <div style="background: linear-gradient(135deg, #E8EAF6 0%, #C5CAE9 100%); 
                     padding: 20px; 
                     border-radius: 10px; 
                     margin-bottom: 20px;
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <h3 style="color: white; margin: 0 0 10px 0; font-size: 1.3rem;">
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
+            <h3 style="color: #3F51B5; margin: 0 0 10px 0; font-size: 1.3rem;">
                 🔍 Customize Your Candidate View
             </h3>
-            <p style="color: #f0f0f0; margin: 0; font-size: 1rem; line-height: 1.5;">
+            <p style="color: #5C6BC0; margin: 0; font-size: 1rem; line-height: 1.5;">
                 Select the columns below to filter and customize your candidate pool display. 
                 Choose the data fields most relevant to your screening process.
             </p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Dynamically set default columns based on what exists
-        available_cols = list(df.columns)
-        default_cols = [col for col in ['name', 'email', 'experience_years', 'tech_stack', 'current_role', 'submission_date'] 
+        # Use filtered_df for display
+        available_cols = list(filtered_df.columns)
+        
+        # DEFAULT COLUMNS: name, email, experience_years, tech_stack, current_role, education
+        default_cols = [col for col in ['name', 'email', 'experience_years', 'tech_stack', 'current_role', 'education'] 
                     if col in available_cols]
+        
+        # Initialize session state for selected columns if not exists
+        if 'selected_columns' not in st.session_state:
+            st.session_state.selected_columns = default_cols.copy()
+        if 'show_column_selector' not in st.session_state:
+            st.session_state.show_column_selector = False
         
         # Create reverse mapping for selection
         reverse_mapping = {v: k for k, v in COLUMN_DISPLAY_NAMES.items()}
         
-        # Get display names for available columns
-        available_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in available_cols]
-        default_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in default_cols]
+        # Add Column button aligned to the right
+        col_spacer, col_button = st.columns([5, 1])
         
-        # Column selector with user-friendly names
-        selected_display_names = st.multiselect(
-            "Select columns to display:",
-            available_display_names,
-            default=default_display_names if default_display_names else available_display_names[:min(5, len(available_display_names))]
-        )
+        with col_button:
+            if st.button("➕ Add Column", type="secondary", use_container_width=True):
+                st.session_state.show_column_selector = not st.session_state.show_column_selector
+                st.rerun()
         
-        # Convert back to original column names
-        display_cols = [reverse_mapping.get(name, name) for name in selected_display_names]
+        # Show dropdown when button is clicked
+        if st.session_state.show_column_selector:
+            # Create options for multiselect
+            all_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in available_cols]
+            current_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in st.session_state.selected_columns]
+            
+            # Clean multiselect dropdown (acts as checkboxes)
+            selected_display_names = st.multiselect(
+                "Select columns to display:",
+                all_display_names,
+                default=current_display_names,
+                key="column_selector_multi",
+                help="Check/uncheck columns to customize your view"
+            )
+            
+            # Update selected columns immediately
+            st.session_state.selected_columns = [reverse_mapping.get(name, name) for name in selected_display_names]
+            
+            # Done and Cancel buttons
+            col_done, col_cancel, col_space = st.columns([1, 1, 4])
+            with col_done:
+                if st.button("✓ Done", type="primary", use_container_width=True):
+                    st.session_state.show_column_selector = False
+                    st.rerun()
+            with col_cancel:
+                if st.button("✕ Cancel", use_container_width=True):
+                    st.session_state.show_column_selector = False
+                    st.rerun()
+        
+        display_cols = st.session_state.selected_columns
         
         if display_cols:
-            # Format dataframe for better display
-            formatted_df = format_dataframe_for_display(df, display_cols)
+            # Format dataframe for better display with INCREASED FONT SIZE
+            formatted_df = format_dataframe_for_display(filtered_df, display_cols)
+            
+            # Apply custom styling for larger font
+            st.markdown("""
+            <style>
+            .dataframe {
+                font-size: 16px !important;
+            }
+            .dataframe th {
+                font-size: 17px !important;
+                font-weight: 600 !important;
+            }
+            .dataframe td {
+                font-size: 16px !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
             st.dataframe(formatted_df, use_container_width=True, height=400, hide_index=True)
         
-        if not df.empty:
+        if not filtered_df.empty:
             col1, col2 = st.columns(2)
             
             with col1:
                 csv_buffer = io.StringIO()
-                df.to_csv(csv_buffer, index=False)
+                filtered_df.to_csv(csv_buffer, index=False)
                 st.download_button(
                     "📥 Download Database (CSV)",
                     csv_buffer.getvalue(),
@@ -381,14 +434,14 @@ def render_database_tab():
                         folder_path = st.session_state.sharepoint_config['folder_path']
                         csv_filename = f"candidate_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                         
-                        if save_csv_to_sharepoint(ctx, folder_path, df, csv_filename):
+                        if save_csv_to_sharepoint(ctx, folder_path, filtered_df, csv_filename):
                             st.success("✅ Database saved to SharePoint!")
     else:
         st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
 
 def render_matching_tab():
-    """Render the AI Matching tab"""
-    st.header("Step 2: AI-Powered Candidate Matching")
+    """Render the Intelligent Matching tab - UPDATED UI"""
+    st.header("Step 2: Intelligent Candidate Matching")
     
     # Get configuration
     client = st.session_state.get('client')
@@ -437,8 +490,8 @@ def render_matching_tab():
         if job_desc and client:
             st.divider()
             
-            # AUTOMATED REQUIREMENT EXTRACTION
-            st.subheader("Automated Pre-Screening")
+            # REQUIREMENT EXTRACTION - Removed "Automated" language
+            st.subheader("Pre-Screening Analysis")
             
             if st.button("Analyze JD & Match Candidates", type="primary", use_container_width=True):
                 with st.spinner("Analyzing job requirements..."):
@@ -460,7 +513,7 @@ def render_matching_tab():
                                 if jd_requirements.get('preferred_skills'):
                                     st.write(f"**Preferred Skills:** {', '.join(jd_requirements.get('preferred_skills', []))}")
                         
-                        # Apply automated pre-screening
+                        # Apply pre-screening
                         with st.spinner("Pre-screening candidates based on job requirements..."):
                             # Apply date filter if enabled
                             df_to_screen = st.session_state.candidates_df.copy()
@@ -474,10 +527,57 @@ def render_matching_tab():
                             
                             filtered_df, screening_summary = auto_pre_screen_candidates(df_to_screen, jd_requirements)
                             
+                            # UPDATED: Display filters in bubble structures
                             if screening_summary:
-                                st.info("**Automated Pre-Screening Results:**")
-                                for summary in screening_summary:
-                                    st.write(summary)
+                                st.markdown("### Pre-Screening Results")
+                                
+                                # Display first message (explanation) as single bubble
+                                if len(screening_summary) > 0 and "flexible criteria" in screening_summary[0]:
+                                    st.markdown(f'''
+                                    <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 15px 0;">
+                                        {screening_summary[0]}
+                                    </div>
+                                    ''', unsafe_allow_html=True)
+                                
+                                # Display experience and skills side by side
+                                if len(screening_summary) >= 3:
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        # Experience filter
+                                        if len(screening_summary) > 1:
+                                            st.markdown(f'''
+                                            <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
+                                                {screening_summary[1]}
+                                            </div>
+                                            ''', unsafe_allow_html=True)
+                                    
+                                    with col2:
+                                        # Skills filter
+                                        if len(screening_summary) > 2:
+                                            st.markdown(f'''
+                                            <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
+                                                {screening_summary[2]}
+                                            </div>
+                                            ''', unsafe_allow_html=True)
+                                    
+                                    # Display final summary (full width)
+                                    if len(screening_summary) > 3:
+                                        st.markdown(f'''
+                                        <div style="background: linear-gradient(135deg, #C8E6C9 0%, #A5D6A7 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #66BB6A; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #2E7D32; margin: 15px 0;">
+                                            {screening_summary[3]}
+                                        </div>
+                                        ''', unsafe_allow_html=True)
+                                else:
+                                    # Fallback if summary structure is different
+                                    for i, summary in enumerate(screening_summary):
+                                        if i == 0:  # Skip first one as it's already displayed
+                                            continue
+                                        st.markdown(f'''
+                                        <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0;">
+                                            {summary}
+                                        </div>
+                                        ''', unsafe_allow_html=True)
                             
                             # Display pre-screened candidates in a proper table
                             if not filtered_df.empty:
@@ -487,8 +587,24 @@ def render_matching_tab():
                                 prescreened_cols = ['name', 'email', 'experience_years', 'tech_stack', 'current_role']
                                 available_prescreened_cols = [col for col in prescreened_cols if col in filtered_df.columns]
                                 
-                                # Format and display
+                                # Format and display with INCREASED FONT SIZE
                                 formatted_prescreened = format_dataframe_for_display(filtered_df, available_prescreened_cols)
+                                
+                                st.markdown("""
+                                <style>
+                                .dataframe {
+                                    font-size: 16px !important;
+                                }
+                                .dataframe th {
+                                    font-size: 17px !important;
+                                    font-weight: 600 !important;
+                                }
+                                .dataframe td {
+                                    font-size: 16px !important;
+                                }
+                                </style>
+                                """, unsafe_allow_html=True)
+                                
                                 st.dataframe(formatted_prescreened, use_container_width=True, hide_index=True, height=300)
                                 
                                 # Download pre-screened candidates
@@ -514,20 +630,25 @@ def render_matching_tab():
                                             if save_csv_to_sharepoint(ctx, folder_path, filtered_df, csv_filename):
                                                 st.success("✅ Pre-screened candidates saved to SharePoint!")
                                 
-                                # Proceed with AI matching
-                                with st.spinner(f"AI is analyzing top {top_n} candidates..."):
+                                # Proceed with matching
+                                st.info(f"🎯 Now analyzing top {top_n} candidates from the pre-screened pool...")
+                                
+                                with st.spinner(f"Analyzing top {top_n} candidates..."):
                                     results = match_candidates_with_jd(client, filtered_df, job_desc, top_n)
                                     
                                     if results:
                                         st.session_state.matched_results = results
-                                        st.success(f"✅ Successfully ranked {len(results)} top candidates!")
+                                        st.success(f"✅ Successfully ranked top {len(results)} candidates!")
                             else:
-                                st.warning("⚠️ No candidates passed the automated pre-screening criteria. Consider adjusting the job requirements or uploading more resumes.")
+                                st.warning("⚠️ No candidates passed the pre-screening criteria. Consider adjusting the job requirements or uploading more resumes.")
         
         # Display matched results
         if st.session_state.matched_results:
             st.divider()
             st.subheader(f"🏆 Top {len(st.session_state.matched_results)} Recommended Candidates")
+            
+            # Display message about top_n selection
+            st.info(f"📊 Showing top {len(st.session_state.matched_results)} candidates as configured in sidebar settings")
             
             for cand in st.session_state.matched_results:
                 rank = cand.get('rank', 0)
@@ -541,21 +662,21 @@ def render_matching_tab():
                 rec = cand.get('recommendation', 'N/A')
                 priority = cand.get('interview_priority', 'Medium')
                 
-                # Color coding based on final score
+                # UPDATED: Light color coding based on final score
                 if final_score >= 80:
-                    color = "#28a745"
+                    color = "#66BB6A"  # Light green
                 elif final_score >= 60:
-                    color = "#ffc107"
+                    color = "#FFA726"  # Light orange
                 else:
-                    color = "#dc3545"
+                    color = "#EF5350"  # Light red
                 
                 st.markdown(f"""
-                <div style="border-left: 5px solid {color}; padding: 20px; margin: 15px 0; background: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3>#{rank} - {name} <span style="float: right; color: {color}; font-size: 1.8rem;">{final_score}%</span></h3>
-                    <p style="font-size: 1.0rem; color: #555; margin-top: 5px;">📧 {email}</p>
-                    <p style="font-size: 1.1rem;"><strong>🎯 {rec}</strong> | <strong>⚡ Interview Priority: {priority}</strong></p>
-                    <p style="font-size: 0.95em; color: #666; margin-top: 10px;">
-                        <strong>AI Match Score:</strong> {match}% | <strong>Resume-JD Compatibility:</strong> {semantic_score}%
+                <div style="border-left: 5px solid {color}; padding: 20px; margin: 15px 0; background: #FAFAFA; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
+                    <h3 style="font-size: 18px;">#{rank} - {name} <span style="float: right; color: {color}; font-size: 1.8rem;">{final_score}%</span></h3>
+                    <p style="font-size: 16px; color: #555; margin-top: 5px;">📧 {email}</p>
+                    <p style="font-size: 16px;"><strong>🎯 {rec}</strong> | <strong>⚡ Interview Priority: {priority}</strong></p>
+                    <p style="font-size: 15px; color: #666; margin-top: 10px;">
+                        <strong>Match Score:</strong> {match}% | <strong>Resume-JD Compatibility:</strong> {semantic_score}%
                     </p>
                 </div>
                 """, unsafe_allow_html=True)
@@ -568,7 +689,7 @@ def render_matching_tab():
                     strength_items = format_strengths_weaknesses(strengths)
                     if strength_items:
                         for item in strength_items:
-                            st.markdown(f'<div class="strength-item">• {item}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="strength-item" style="font-size: 15px;">• {item}</div>', unsafe_allow_html=True)
                     else:
                         st.write("No specific strengths listed")
                 
@@ -577,9 +698,9 @@ def render_matching_tab():
                     weakness_items = format_strengths_weaknesses(gaps)
                     if weakness_items and gaps != "None":
                         for item in weakness_items:
-                            st.markdown(f'<div class="weakness-item">• {item}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="weakness-item" style="font-size: 15px;">• {item}</div>', unsafe_allow_html=True)
                     else:
-                        st.markdown('<div class="strength-item">• No significant gaps identified</div>', unsafe_allow_html=True)
+                        st.markdown('<div class="strength-item" style="font-size: 15px;">• No significant gaps identified</div>', unsafe_allow_html=True)
                 
                 # Full profile
                 cand_full = st.session_state.candidates_df[
@@ -633,7 +754,7 @@ def render_matching_tab():
                 st.download_button(
                     "📊 Download Matching Results (CSV)",
                     csv_buffer.getvalue(),
-                    f"top_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    f"top_{len(st.session_state.matched_results)}_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     "text/csv",
                     use_container_width=True
                 )
@@ -643,7 +764,7 @@ def render_matching_tab():
                     if st.button("☁️ Save Matching Results to SharePoint", use_container_width=True):
                         ctx = st.session_state.sharepoint_config['context']
                         folder_path = st.session_state.sharepoint_config['folder_path']
-                        csv_filename = f"top_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                        csv_filename = f"top_{len(st.session_state.matched_results)}_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                         
                         if save_csv_to_sharepoint(ctx, folder_path, results_df, csv_filename):
                             st.success("✅ Matching results saved to SharePoint!")
@@ -651,7 +772,7 @@ def render_matching_tab():
         st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
 
 def render_analytics_tab():
-    """Render the Analytics Dashboard tab"""
+    """Render the Recruitment Analytics Dashboard tab - UPDATED UI"""
     st.header("📈 Recruitment Analytics Dashboard")
     
     # Get configuration
@@ -670,21 +791,18 @@ def render_analytics_tab():
             except:
                 pass
         
-        # Key Metrics
-        col1, col2, col3, col4 = st.columns(4)
+        # UPDATED: Key Metrics - Removed Average Experience
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            avg_exp = df['experience_years'].astype(float).mean()
-            st.metric("Average Experience", f"{avg_exp:.1f} years")
-        with col2:
             st.metric("Total Candidate Pool", len(df))
-        with col3:
+        with col2:
             if st.session_state.matched_results:
                 avg_match = sum(c['final_score'] for c in st.session_state.matched_results) / len(st.session_state.matched_results)
-                st.metric("Avg Compatibility Score", f"{avg_match:.1f}%")
+                st.metric("Avg Match Score", f"{avg_match:.1f}%")
             else:
-                st.metric("Avg Compatibility Score", "N/A")
-        with col4:
+                st.metric("Avg Match Score", "N/A")
+        with col3:
             unique_skills = len(set(', '.join(df['tech_stack'].astype(str)).split(', ')))
             st.metric("Unique Skills in Pool", unique_skills)
         
@@ -700,6 +818,7 @@ def render_analytics_tab():
                              labels=['0-2 years', '2-5 years', '5-10 years', '10+ years'])
             exp_counts = exp_bins.value_counts().sort_index()
             
+            # UPDATED: Light colors
             fig = px.bar(
                 x=exp_counts.index.astype(str), 
                 y=exp_counts.values, 
@@ -712,32 +831,35 @@ def render_analytics_tab():
         
         with col2:
             if st.session_state.matched_results:
-                st.subheader("Candidate Compatibility Scores")
+                # UPDATED: Changed title and colors
+                st.subheader("Candidate Match Scores")
                 scores = [c['final_score'] for c in st.session_state.matched_results]
                 names = [c['name'] for c in st.session_state.matched_results]
                 
+                # UPDATED: Light color scheme
                 fig = go.Figure(data=[go.Bar(
                     x=scores,
                     y=names,
                     orientation='h',
                     marker=dict(
                         color=scores,
-                        colorscale='RdYlGn',
-                        showscale=True
+                        colorscale=[[0, '#FFCDD2'], [0.5, '#FFE082'], [1, '#C8E6C9']],  # Light red to light green
+                        showscale=True,
+                        colorbar=dict(title="Score")
                     ),
                     text=[f"{s}%" for s in scores],
                     textposition='outside'
                 )])
                 fig.update_layout(
-                    xaxis_title="Compatibility Score (%)",
+                    xaxis_title="Match Score (%)",
                     yaxis_title="Candidate",
                     yaxis=dict(autorange="reversed")
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Run AI matching to see compatibility scores")
+                st.info("Run matching to see compatibility scores")
         
-        # Top Skills Chart - ENHANCED with better hover widget
+        # UPDATED: Top Skills Chart with percentages and color bar
         st.subheader("Top Skills in Candidate Pool")
         
         # Create skill-to-candidates mapping
@@ -753,51 +875,63 @@ def render_analytics_tab():
                     skill_candidates[skill].append(candidate_name)
         
         # Count and sort skills
+        total_candidates = len(df)
         skill_counts = {skill: len(candidates) for skill, candidates in skill_candidates.items()}
         sorted_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:15]
         
         skill_names = [s[0].title() for s in sorted_skills]
         skill_values = [s[1] for s in sorted_skills]
+        skill_percentages = [(s[1] / total_candidates * 100) for s in sorted_skills]
         
-        # Create ENHANCED hover text with better formatting
+        # UPDATED: Create window-style hover with percentages
         hover_texts = []
-        for skill_name in [s[0] for s in sorted_skills]:
+        for idx, skill_name in enumerate([s[0] for s in sorted_skills]):
             candidates = skill_candidates[skill_name]
+            percentage = skill_percentages[idx]
+            count = skill_values[idx]
+            
             # Format candidates in a readable way
             if len(candidates) <= 8:
                 candidates_list = '<br>   • '.join(candidates)
-                hover_text = f"<b>Candidates with this skill:</b><br>   • {candidates_list}"
+                hover_text = f"<b style='font-size:18px'>{skill_name.title()}</b><br><br><b>Coverage:</b> {percentage:.1f}% ({count}/{total_candidates} candidates)<br><br><b>Candidates:</b><br>   • {candidates_list}"
             else:
                 candidates_list = '<br>   • '.join(candidates[:8])
-                hover_text = f"<b>Candidates with this skill:</b><br>   • {candidates_list}<br>   • ...and {len(candidates)-8} more"
+                hover_text = f"<b style='font-size:18px'>{skill_name.title()}</b><br><br><b>Coverage:</b> {percentage:.1f}% ({count}/{total_candidates} candidates)<br><br><b>Candidates:</b><br>   • {candidates_list}<br>   • ...and {len(candidates)-8} more"
             hover_texts.append(hover_text)
         
+        # UPDATED: Light color scheme with color bar
         fig = go.Figure(data=[go.Bar(
-            y=skill_names[::-1],  # Reverse to show top at top
-            x=skill_values[::-1],
+            y=skill_names[::-1],
+            x=skill_percentages[::-1],
             orientation='h',
             marker=dict(
-                color=skill_values[::-1],
-                colorscale='Viridis',
-                showscale=False
+                color=skill_percentages[::-1],
+                colorscale='Tealgrn',  # Light teal to green
+                showscale=True,
+                colorbar=dict(
+                    title="Coverage %",
+                    titleside="right",
+                    ticksuffix="%"
+                )
             ),
-            text=skill_values[::-1],
+            text=[f"{p:.1f}%" for p in skill_percentages[::-1]],
             textposition='outside',
             hovertext=hover_texts[::-1],
-            hovertemplate='<b style="font-size:16px">%{y}</b><br>Count: %{x}<br><br>%{hovertext}<extra></extra>'
+            hovertemplate='%{hovertext}<extra></extra>'
         )])
         
         fig.update_layout(
-            xaxis_title="Number of Candidates",
+            xaxis_title="Percentage of Candidates (%)",
             yaxis_title="Skill",
             height=600,
             margin=dict(l=150),
             hoverlabel=dict(
                 bgcolor="white",
-                font_size=14,
+                font_size=15,
                 font_family="Arial",
                 font_color="black",
-                bordercolor="gray"
+                bordercolor="#BDBDBD",
+                align="left"
             )
         )
         
@@ -811,6 +945,7 @@ def render_analytics_tab():
                 timeline = df.groupby(df['submission_date'].dt.date).size().reset_index()
                 timeline.columns = ['Date', 'Count']
                 
+                # UPDATED: Light colors
                 fig = px.line(
                     timeline, 
                     x='Date', 
@@ -818,6 +953,7 @@ def render_analytics_tab():
                     markers=True,
                     labels={'Count': 'Resumes Received'}
                 )
+                fig.update_traces(line_color='#64B5F6', marker=dict(size=8, color='#42A5F5'))
                 fig.update_layout(
                     hovermode='x unified',
                     hoverlabel=dict(

@@ -175,8 +175,8 @@ def main():
     st.divider()
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 20px;">
-        <p>🚀 AI Resume Screening System v2.1 | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
-        <p style="font-size: 0.85em;">© 2024 NEXTURN. All rights reserved.</p>
+        <p> AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
+        <p style="font-size: 0.85em;">© 2026 NEXTURN. All rights reserved.</p>
     </div>
     """, unsafe_allow_html=True)
 

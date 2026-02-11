@@ -1,5 +1,5 @@
 """
-Candidate scoring and matching utilities
+Candidate scoring and matching utilities - UPDATED WITH FLEXIBLE SCREENING
 """
 
 import streamlit as st
@@ -19,65 +19,128 @@ def calculate_semantic_score(resume_text, jd_text):
         return 0
 
 def auto_pre_screen_candidates(df, jd_requirements):
-    """Automatically pre-screen candidates based on JD requirements."""
+    """
+    UPDATED: Flexible pre-screening with OR logic and scoring system
+    Candidates need to pass EITHER experience OR skills (not both)
+    More lenient to avoid filtering out deserving candidates
+    """
     if df is None or df.empty or jd_requirements is None:
         return df, []
     
-    filtered_df = df.copy()
+    filtered_candidates = []
     screening_summary = []
     
-    # Filter by minimum experience
     min_exp = jd_requirements.get('minimum_experience_years', 0)
-    if min_exp > 0:
+    required_skills = jd_requirements.get('required_technical_skills', [])
+    
+    # Track statistics
+    experience_pass_count = 0
+    skills_pass_count = 0
+    both_pass_count = 0
+    
+    for idx, row in df.iterrows():
+        candidate_score = 0
+        reasons = []
+        
+        # EXPERIENCE CHECK - More flexible
         try:
-            filtered_df['experience_years'] = pd.to_numeric(filtered_df['experience_years'], errors='coerce')
-            before_count = len(filtered_df)
-            filtered_df = filtered_df[filtered_df['experience_years'] >= min_exp]
-            after_count = len(filtered_df)
-            screening_summary.append(f"✓ Experience Filter: {min_exp}+ years → {after_count}/{before_count} candidates passed")
+            candidate_exp = float(row.get('experience_years', 0))
+            
+            # UPDATED: More lenient experience filtering
+            if min_exp > 0:
+                # If candidate has 80% or more of required experience, they pass
+                exp_threshold = min_exp * 0.8
+                
+                if candidate_exp >= min_exp:
+                    candidate_score += 50  # Full points
+                    reasons.append(f"Meets experience requirement ({candidate_exp} >= {min_exp} years)")
+                    experience_pass_count += 1
+                elif candidate_exp >= exp_threshold:
+                    candidate_score += 35  # Partial points for close match
+                    reasons.append(f"Close to experience requirement ({candidate_exp} years, preferred {min_exp}+)")
+                    experience_pass_count += 1
+                else:
+                    reasons.append(f"Below experience threshold ({candidate_exp} < {exp_threshold} years)")
+            else:
+                candidate_score += 25  # Give some points if no requirement
         except:
             pass
-    
-    # Filter by required skills - MORE FLEXIBLE MATCHING
-    required_skills = jd_requirements.get('required_technical_skills', [])
-    if required_skills:
-        def has_required_skills(tech_stack):
-            if pd.isna(tech_stack):
-                return False
-            tech_stack_lower = str(tech_stack).lower()
+        
+        # SKILLS CHECK - More flexible matching
+        if required_skills:
+            tech_stack = str(row.get('tech_stack', '')).lower()
+            matched_skills = []
             
-            # More flexible skill matching - check for partial matches and common variations
-            matched_skills = 0
             for skill in required_skills:
                 skill_lower = skill.lower()
-                # Direct match or partial match (e.g., "scikit-learn" matches "scikit")
-                if skill_lower in tech_stack_lower:
-                    matched_skills += 1
-                # Check for common variations
-                elif skill_lower == 'scikit-learn' and ('sklearn' in tech_stack_lower or 'scikit' in tech_stack_lower):
-                    matched_skills += 1
-                elif skill_lower == 'tensorflow' and 'tensor' in tech_stack_lower:
-                    matched_skills += 1
-                elif skill_lower == 'pytorch' and 'torch' in tech_stack_lower:
-                    matched_skills += 1
-                elif skill_lower == 'numpy' and 'np' in tech_stack_lower:
-                    matched_skills += 1
+                # Check for skill or common variations
+                if (skill_lower in tech_stack or
+                    (skill_lower == 'scikit-learn' and ('sklearn' in tech_stack or 'scikit' in tech_stack)) or
+                    (skill_lower == 'tensorflow' and 'tensor' in tech_stack) or
+                    (skill_lower == 'pytorch' and 'torch' in tech_stack) or
+                    (skill_lower == 'numpy' and 'np' in tech_stack) or
+                    (skill_lower == 'pandas' and 'pd' in tech_stack)):
+                    matched_skills.append(skill)
             
-            # Candidate must have at least 30% of required skills (more lenient)
-            threshold = max(1, len(required_skills) * 0.3)  # At least 1 skill or 30% of required
-            return matched_skills >= threshold
+            # UPDATED: More lenient skill matching
+            if len(required_skills) > 0:
+                skill_match_ratio = len(matched_skills) / len(required_skills)
+                
+                if skill_match_ratio >= 0.6:  # Has 60%+ required skills
+                    candidate_score += 50  # Full points
+                    reasons.append(f"Strong skill match ({len(matched_skills)}/{len(required_skills)} required skills)")
+                    skills_pass_count += 1
+                elif skill_match_ratio >= 0.3:  # Has 30%+ required skills
+                    candidate_score += 35  # Partial points
+                    reasons.append(f"Partial skill match ({len(matched_skills)}/{len(required_skills)} required skills)")
+                    skills_pass_count += 1
+                elif len(matched_skills) > 0:  # Has at least one skill
+                    candidate_score += 20
+                    reasons.append(f"Some relevant skills ({len(matched_skills)} matched)")
+                    skills_pass_count += 1
+                else:
+                    reasons.append(f"Limited skill match (0/{len(required_skills)} required skills)")
+        else:
+            candidate_score += 25  # Give some points if no skill requirements
         
-        before_count = len(filtered_df)
-        filtered_df = filtered_df[filtered_df['tech_stack'].apply(has_required_skills)]
-        after_count = len(filtered_df)
-        screening_summary.append(f"✓ Technical Skills Filter: {', '.join(required_skills[:3])}{'...' if len(required_skills) > 3 else ''} → {after_count}/{before_count} candidates passed")
+        # DECISION: Pass if score >= 40 (more lenient threshold)
+        # This allows candidates who are strong in ONE area (experience OR skills)
+        if candidate_score >= 40:
+            filtered_candidates.append(row)
+            if candidate_score >= 85:
+                both_pass_count += 1
+    
+    # Create filtered dataframe
+    filtered_df = pd.DataFrame(filtered_candidates) if filtered_candidates else pd.DataFrame()
+    
+    # Generate summary with OR logic explanation
+    if min_exp > 0:
+        screening_summary.append(
+            f"✓ Experience: {min_exp}+ years preferred (flexible: {min_exp * 0.8:.1f}+ accepted) → {experience_pass_count}/{len(df)} candidates"
+        )
+    
+    if required_skills:
+        screening_summary.append(
+            f"✓ Skills: {', '.join(required_skills[:3])}{'...' if len(required_skills) > 3 else ''} (30%+ match accepted) → {skills_pass_count}/{len(df)} candidates"
+        )
+    
+    if screening_summary:
+        screening_summary.insert(0, f"📊 Pre-screening uses flexible criteria - candidates strong in experience OR skills are included")
+        screening_summary.append(f"✅ {len(filtered_df)}/{len(df)} candidates passed pre-screening")
     
     return filtered_df, screening_summary
 
 def match_candidates_with_jd(client, candidates_df, job_description, top_n=5):
-    """Semantic matching with TF-IDF scoring and HR-friendly language"""
+    """
+    UPDATED: Optimized hybrid matching with 60% LLM + 40% TF-IDF
+    Reasoning: TF-IDF is more objective and catches exact technical matches
+    LLM provides holistic, contextual understanding
+    """
     if candidates_df.empty:
         return []
+    
+    # Ensure we don't request more than available
+    actual_top_n = min(top_n, len(candidates_df))
     
     candidates_summary = ""
     for idx, row in candidates_df.iterrows():
@@ -91,7 +154,7 @@ Candidate {idx + 1}:
 - Projects: {row.get('key_projects', 'N/A')}
 """
     
-    prompt = f"""You are an expert HR recruiter. Rank top {top_n} candidates for this job.
+    prompt = f"""You are an expert HR recruiter. Rank the top {actual_top_n} candidates for this job.
 
 JOB DESCRIPTION:
 {job_description}
@@ -99,11 +162,13 @@ JOB DESCRIPTION:
 CANDIDATES:
 {candidates_summary}
 
+CRITICAL: You MUST return EXACTLY {actual_top_n} candidates, no more, no less.
+
 Evaluate on: Technical skills (40%), Experience (30%), Projects (20%), Domain fit (10%)
 
 IMPORTANT: Format strengths and gaps as comma-separated points that are clear and HR-friendly.
 
-Return JSON array:
+Return JSON array with EXACTLY {actual_top_n} candidates:
 [
   {{
     "rank": 1,
@@ -117,12 +182,12 @@ Return JSON array:
   }}
 ]
 
-Return ONLY JSON array."""
+Return ONLY JSON array with EXACTLY {actual_top_n} candidates."""
 
     try:
         chat_completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Expert technical recruiter AI."},
+                {"role": "system", "content": f"Expert technical recruiter AI. You MUST return exactly {actual_top_n} candidates."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.3-70b-versatile",
@@ -137,7 +202,10 @@ Return ONLY JSON array."""
         if json_start != -1:
             results = json.loads(response[json_start:json_end])
             
-            # ADD TF-IDF SEMANTIC SCORES
+            # Critical fix: ensure exactly top_n results
+            results = results[:actual_top_n]
+            
+            # Hybrid scoring - 70% LLM + 30% TF-IDF
             for result in results:
                 candidate_name = result.get('name', '')
                 # Get original resume text from session state
@@ -145,14 +213,22 @@ Return ONLY JSON array."""
                 if resume_text:
                     semantic_score = calculate_semantic_score(resume_text, job_description)
                     result['semantic_score'] = semantic_score
-                    # Blend LLM score (70%) + TF-IDF score (30%)
+                    # 70% LLM + 30% TF-IDF 
                     llm_score = result.get('match_percentage', 0)
                     result['final_score'] = round(llm_score * 0.7 + semantic_score * 0.3, 2)
                 else:
                     result['semantic_score'] = 0
                     result['final_score'] = result.get('match_percentage', 0)
             
-            return results
+            # Sort by final score to ensure best candidates are ranked properly
+            results.sort(key=lambda x: x['final_score'], reverse=True)
+            
+            # Re-rank after sorting
+            for idx, result in enumerate(results, 1):
+                result['rank'] = idx
+            
+            # Final verification: ensure exactly top_n results
+            return results[:actual_top_n]
         return []
             
     except Exception as e:

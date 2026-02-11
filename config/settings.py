@@ -1,54 +1,88 @@
 """
-Application settings and configuration
+Application settings and configuration - UPDATED WITH LIGHT COLORS
 """
 
 # Page Configuration
 PAGE_CONFIG = {
-    "page_title": "AI Resume Screening System",
+    "page_title": "Recruitment Screening System",
     "page_icon": "🎯",
     "layout": "wide",
     "initial_sidebar_state": "expanded"
 }
 
-# Custom CSS
+# Custom CSS - UPDATED WITH LIGHT COLORS
 CUSTOM_CSS = """
     <style>
+    /* Button styling with light gradient */
     .stButton>button {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(90deg, #7986CB 0%, #9FA8DA 100%);
         color: white;
         border: none;
         padding: 10px 30px;
         border-radius: 8px;
         font-weight: 600;
     }
+    
+    /* Add Column button - Light green */
+    .stButton>button[kind="secondary"] {
+        background: linear-gradient(90deg, #81C784 0%, #A5D6A7 100%);
+        color: white;
+    }
+    
+    /* Multiselect pills - Light blue/indigo instead of red */
+    .stMultiSelect [data-baseweb="tag"] {
+        background: linear-gradient(135deg, #90CAF9 0%, #64B5F6 100%) !important;
+        color: white !important;
+        border: none !important;
+    }
+    
+    .stMultiSelect [data-baseweb="tag"] span {
+        color: white !important;
+    }
+    
+    /* Strength items - Light green background */
     .strength-item {
         padding: 8px 12px;
         margin: 5px 0;
-        background: #d4edda;
-        border-left: 4px solid #28a745;
+        background: #E8F5E9;
+        border-left: 4px solid #66BB6A;
         border-radius: 4px;
+        font-size: 15px;
     }
+    
+    /* Weakness items - Light orange background */
     .weakness-item {
         padding: 8px 12px;
         margin: 5px 0;
-        background: #fff3cd;
-        border-left: 4px solid #ffc107;
+        background: #FFF3E0;
+        border-left: 4px solid #FFA726;
         border-radius: 4px;
+        font-size: 15px;
     }
-    /* Better table styling */
+    
+    /* Table styling with light colors */
     .dataframe {
-        font-size: 14px;
+        font-size: 16px;
     }
     .dataframe th {
-        background-color: #667eea;
-        color: white;
+        background: linear-gradient(135deg, #E8EAF6 0%, #C5CAE9 100%);
+        color: #3F51B5;
         font-weight: 600;
         padding: 12px;
         text-align: left;
+        font-size: 17px;
     }
     .dataframe td {
         padding: 10px;
-        border-bottom: 1px solid #ddd;
+        border-bottom: 1px solid #E0E0E0;
+        font-size: 16px;
+    }
+    
+    /* Remove any bright red or green */
+    .stMetric {
+        background-color: #FAFAFA;
+        padding: 10px;
+        border-radius: 8px;
     }
     </style>
 """
@@ -72,15 +106,15 @@ Responsibilities:
 - Manage production deployments
 - Code reviews and best practices""",
     
-    "Data Scientist": """Data Scientist - ML/AI Focus
+    "Data Scientist": """Data Scientist - ML Focus
 
 Required Skills:
-- 3+ years in Machine Learning/AI
+- 3+ years in Machine Learning
 - Python (NumPy, Pandas, Scikit-learn)
 - TensorFlow or PyTorch
 - SQL and data warehousing
 - Statistical analysis
-- Generative AI experience (preferred)
+- R, Pandas
 
 Responsibilities:
 - Build and deploy ML models
