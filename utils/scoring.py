@@ -121,11 +121,11 @@ def auto_pre_screen_candidates(df, jd_requirements):
     
     if required_skills:
         screening_summary.append(
-            f"✓ Skills: {', '.join(required_skills[:3])}{'...' if len(required_skills) > 3 else ''} (30%+ match accepted) → {skills_pass_count}/{len(df)} candidates"
+            f"✓ Skills: {', '.join(required_skills[:3])}{'...' if len(required_skills) > 3 else ''} → {skills_pass_count}/{len(df)} candidates"
         )
     
     if screening_summary:
-        screening_summary.insert(0, f"📊 Pre-screening uses flexible criteria - candidates strong in experience OR skills are included")
+        screening_summary.insert(0, f"📊 Pre-screening weighs in both experience and skillset as per JD requirements")
         screening_summary.append(f"✅ {len(filtered_df)}/{len(df)} candidates passed pre-screening")
     
     return filtered_df, screening_summary

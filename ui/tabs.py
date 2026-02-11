@@ -336,62 +336,114 @@ def render_database_tab():
             </p>
         </div>
         """, unsafe_allow_html=True)
-        
+
         # Use filtered_df for display
         available_cols = list(filtered_df.columns)
-        
+
         # DEFAULT COLUMNS: name, email, experience_years, tech_stack, current_role, education
         default_cols = [col for col in ['name', 'email', 'experience_years', 'tech_stack', 'current_role', 'education'] 
                     if col in available_cols]
-        
+
         # Initialize session state for selected columns if not exists
         if 'selected_columns' not in st.session_state:
             st.session_state.selected_columns = default_cols.copy()
         if 'show_column_selector' not in st.session_state:
             st.session_state.show_column_selector = False
-        
+
         # Create reverse mapping for selection
         reverse_mapping = {v: k for k, v in COLUMN_DISPLAY_NAMES.items()}
-        
-        # Add Column button aligned to the right
+
+        # Add Column button aligned to the right with dropdown
         col_spacer, col_button = st.columns([5, 1])
-        
+
         with col_button:
-            if st.button("➕ Add Column", type="secondary", use_container_width=True):
+            if st.button("➕ Add Column", type="secondary", use_container_width=True, key="add_col_btn"):
                 st.session_state.show_column_selector = not st.session_state.show_column_selector
                 st.rerun()
-        
-        # Show dropdown when button is clicked
+
+        # Show dropdown when button is clicked - positioned below in full width
         if st.session_state.show_column_selector:
-            # Create options for multiselect
-            all_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in available_cols]
-            current_display_names = [COLUMN_DISPLAY_NAMES.get(col, col) for col in st.session_state.selected_columns]
+            # Custom CSS for horizontal layout
+            st.markdown("""
+            <style>
+            .checkbox-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 10px;
+                padding: 15px;
+                background: white;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                margin-top: 10px;
+            }
             
-            # Clean multiselect dropdown (acts as checkboxes)
-            selected_display_names = st.multiselect(
-                "Select columns to display:",
-                all_display_names,
-                default=current_display_names,
-                key="column_selector_multi",
-                help="Check/uncheck columns to customize your view"
-            )
+            .checkbox-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
             
-            # Update selected columns immediately
-            st.session_state.selected_columns = [reverse_mapping.get(name, name) for name in selected_display_names]
+            .checkbox-header {
+                font-weight: 600;
+                padding: 10px 15px;
+                background: white;
+                border: 1px solid #ddd;
+                border-bottom: 2px solid #3F51B5;
+                border-radius: 8px 8px 0 0;
+                margin-top: 10px;
+                color: #3F51B5;
+                font-size: 16px;
+            }
             
-            # Done and Cancel buttons
-            col_done, col_cancel, col_space = st.columns([1, 1, 4])
-            with col_done:
-                if st.button("✓ Done", type="primary", use_container_width=True):
+            div[data-testid="stHorizontalBlock"] > div {
+                gap: 15px !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Header
+            st.markdown('<div class="checkbox-header">📋 Select Columns to Display</div>', unsafe_allow_html=True)
+            
+            # Calculate number of columns per row (4 columns)
+            num_cols_per_row = 4
+            
+            # Create rows of checkboxes
+            for i in range(0, len(available_cols), num_cols_per_row):
+                cols = st.columns(num_cols_per_row)
+                
+                for j, col_widget in enumerate(cols):
+                    col_index = i + j
+                    if col_index < len(available_cols):
+                        col = available_cols[col_index]
+                        display_name = COLUMN_DISPLAY_NAMES.get(col, col)
+                        is_selected = col in st.session_state.selected_columns
+                        
+                        with col_widget:
+                            # Use checkbox with unique key
+                            if st.checkbox(
+                                display_name,
+                                value=is_selected,
+                                key=f"col_check_{col}"
+                            ):
+                                # Add column if checked and not already in list
+                                if col not in st.session_state.selected_columns:
+                                    st.session_state.selected_columns.append(col)
+                            else:
+                                # Remove column if unchecked
+                                if col in st.session_state.selected_columns:
+                                    st.session_state.selected_columns.remove(col)
+            
+            # Close button
+            st.markdown("---")
+            close_col1, close_col2, close_col3 = st.columns([2, 1, 2])
+            with close_col2:
+                if st.button("✓ Close", type="primary", use_container_width=True, key="close_dropdown"):
                     st.session_state.show_column_selector = False
                     st.rerun()
-            with col_cancel:
-                if st.button("✕ Cancel", use_container_width=True):
-                    st.session_state.show_column_selector = False
-                    st.rerun()
-        
+
         display_cols = st.session_state.selected_columns
-        
+
         if display_cols:
             # Format dataframe for better display with INCREASED FONT SIZE
             formatted_df = format_dataframe_for_display(filtered_df, display_cols)
@@ -413,7 +465,7 @@ def render_database_tab():
             """, unsafe_allow_html=True)
             
             st.dataframe(formatted_df, use_container_width=True, height=400, hide_index=True)
-        
+
         if not filtered_df.empty:
             col1, col2 = st.columns(2)
             
@@ -436,8 +488,8 @@ def render_database_tab():
                         
                         if save_csv_to_sharepoint(ctx, folder_path, filtered_df, csv_filename):
                             st.success("✅ Database saved to SharePoint!")
-    else:
-        st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
+        else:
+            st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
 
 def render_matching_tab():
     """Render the Intelligent Matching tab - UPDATED UI"""
@@ -532,9 +584,9 @@ def render_matching_tab():
                                 st.markdown("### Pre-Screening Results")
                                 
                                 # Display first message (explanation) as single bubble
-                                if len(screening_summary) > 0 and "flexible criteria" in screening_summary[0]:
+                                if len(screening_summary) > 0 and "weighs in both" in screening_summary[0]:
                                     st.markdown(f'''
-                                    <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 15px 0;">
+                                    <div style="background: linear-gradient(135deg, rgba(227, 242, 253, 0.5) 0%, rgba(187, 222, 251, 0.5) 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 15px 0;">
                                         {screening_summary[0]}
                                     </div>
                                     ''', unsafe_allow_html=True)
@@ -547,7 +599,7 @@ def render_matching_tab():
                                         # Experience filter
                                         if len(screening_summary) > 1:
                                             st.markdown(f'''
-                                            <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
+                                            <div style="background: linear-gradient(135deg, rgba(227, 242, 253, 0.5) 0%, rgba(187, 222, 251, 0.5) 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
                                                 {screening_summary[1]}
                                             </div>
                                             ''', unsafe_allow_html=True)
@@ -556,7 +608,7 @@ def render_matching_tab():
                                         # Skills filter
                                         if len(screening_summary) > 2:
                                             st.markdown(f'''
-                                            <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
+                                            <div style="background: linear-gradient(135deg, rgba(227, 242, 253, 0.5) 0%, rgba(187, 222, 251, 0.5) 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
                                                 {screening_summary[2]}
                                             </div>
                                             ''', unsafe_allow_html=True)
@@ -564,7 +616,7 @@ def render_matching_tab():
                                     # Display final summary (full width)
                                     if len(screening_summary) > 3:
                                         st.markdown(f'''
-                                        <div style="background: linear-gradient(135deg, #C8E6C9 0%, #A5D6A7 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #66BB6A; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #2E7D32; margin: 15px 0;">
+                                        <div style="background: linear-gradient(135deg, rgba(200, 230, 201, 0.5) 0%, rgba(165, 214, 167, 0.5) 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #66BB6A; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #2E7D32; margin: 15px 0;">
                                             {screening_summary[3]}
                                         </div>
                                         ''', unsafe_allow_html=True)
@@ -574,7 +626,7 @@ def render_matching_tab():
                                         if i == 0:  # Skip first one as it's already displayed
                                             continue
                                         st.markdown(f'''
-                                        <div style="background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0;">
+                                        <div style="background: linear-gradient(135deg, rgba(227, 242, 253, 0.5) 0%, rgba(187, 222, 251, 0.5) 100%); padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5; box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600; color: #1976D2; margin: 10px 0;">
                                             {summary}
                                         </div>
                                         ''', unsafe_allow_html=True)
@@ -648,7 +700,7 @@ def render_matching_tab():
             st.subheader(f"🏆 Top {len(st.session_state.matched_results)} Recommended Candidates")
             
             # Display message about top_n selection
-            st.info(f"📊 Showing top {len(st.session_state.matched_results)} candidates as configured in sidebar settings")
+            st.info(f"📊 Showing top {len(st.session_state.matched_results)} candidates as per HR's selected number of candidates for screening")
             
             for cand in st.session_state.matched_results:
                 rank = cand.get('rank', 0)

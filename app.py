@@ -47,7 +47,7 @@ def main():
     # NEXTURN Logo - Centered and Properly Sized
     try:
         logo = Image.open("logo.png")
-        col1, col2, col3 = st.columns([1, 2, 1])
+        col1, col2, col3 = st.columns([1, 1.3, 1])
         with col2:
             st.image(logo, width=400)
     except FileNotFoundError:
@@ -59,7 +59,7 @@ def main():
     # Title Section
     st.markdown("""
     <h1 style="font-size: 3rem; font-weight: 700; color: #1a1a1a; text-align: center; margin: 15px 0 10px 0; letter-spacing: -0.5px;">
-         Resume Screening System
+          Resume Screening System
     </h1>
     <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
          Powered by Groq | Automated Intelligent Recruitment
