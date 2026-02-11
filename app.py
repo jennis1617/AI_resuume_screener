@@ -59,10 +59,10 @@ def main():
     # Title Section
     st.markdown("""
     <h1 style="font-size: 3rem; font-weight: 700; color: #1a1a1a; text-align: center; margin: 15px 0 10px 0; letter-spacing: -0.5px;">
-        AI Resume Screening System
+         Resume Screening System
     </h1>
     <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
-        ⚡ Powered by Groq | Automated Intelligent Recruitment
+         Powered by Groq | Automated Intelligent Recruitment
     </p>
     """, unsafe_allow_html=True)
     
