@@ -15,7 +15,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
 except ImportError:
-    pass  # python-dotenv not installed; rely on env vars / Streamlit secrets
+    pass
 
 from config.settings import PAGE_CONFIG, CUSTOM_CSS
 from utils.groq_client import init_groq_client
@@ -27,30 +27,36 @@ st.set_page_config(**PAGE_CONFIG)
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # ── Session State Initialisation ───────────────────────────────────────────────
-_defaults = {
+defaults = {
     'parsed_resumes': [],
     'candidates_df': None,
     'matched_results': None,
     'resume_texts': {},
     'resume_metadata': {},
-    # SharePoint (Graph API) config
+
+    # ADD THIS
+    'downloaded_resumes': [],
+
     'sharepoint_config': {
         'tenant_id': os.getenv('TENANT_ID', ''),
         'client_id': os.getenv('CLIENT_ID', ''),
         'client_secret': os.getenv('CLIENT_SECRET', ''),
-        'site_id': os.getenv('SHAREPOINT_SITE_ID', ''),
-        'drive_id': os.getenv('SHAREPOINT_DRIVE_ID', ''),
-        'folder_path': 'Shared Documents/Resumes',
+        'site_id': os.getenv('SITE_ID', ''),
+        'drive_id': os.getenv('DRIVE_ID', ''),
+        'input_folder_path': os.getenv('INPUT_FOLDER_PATH', ''),
+        'output_folder_path': os.getenv('OUTPUT_FOLDER_PATH', ''),
         'connected': False,
     },
 }
-for key, val in _defaults.items():
+
+for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
+
     # Header
     st.markdown('<div class="nexturn-header">', unsafe_allow_html=True)
     try:
@@ -59,22 +65,13 @@ def main():
         with col2:
             st.image(logo, width=400)
     except FileNotFoundError:
-        st.error("⚠️ Logo file 'logo.png' not found in the app folder")
+        st.error("⚠️ Logo file 'logo.png' not found")
 
-    st.markdown('<hr style="margin: 20px 0; border: none; border-top: 2px solid #e0e0e0;">', unsafe_allow_html=True)
-    st.markdown("""
-    <h1 style="font-size: 3rem; font-weight: 700; color: #1a1a1a; text-align: center;
-               margin: 15px 0 10px 0; letter-spacing: -0.5px;">
-          Resume Screening System
-    </h1>
-    <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
-         Powered by Groq | Automated Intelligent Recruitment
-    </p>
-    """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Sidebar ────────────────────────────────────────────────────────────────
     with st.sidebar:
+
         st.title("⚙️ Configuration")
 
         # ── Groq API Keys ──────────────────────────────────────────────────────
@@ -84,13 +81,12 @@ def main():
             "Primary Groq API Key",
             type="password",
             value=st.session_state.get('groq_api_key', os.getenv('GROQ_API_KEY', '')),
-            help="Get a free key at https://console.groq.com",
         )
+
         groq_fallback_key = st.text_input(
             "Fallback Groq API Key (optional)",
             type="password",
             value=st.session_state.get('groq_fallback_key', os.getenv('GROQ_FALLBACK_API_KEY', '')),
-            help="Used automatically if the primary key fails or hits its rate limit.",
         )
 
         client = None
@@ -104,118 +100,80 @@ def main():
             except Exception:
                 st.error("❌ Primary key invalid")
 
-        else:
-            st.warning("⚠️ Enter Primary API Key")
-
         if groq_fallback_key:
             st.session_state['groq_fallback_key'] = groq_fallback_key
             try:
                 fallback_client = init_groq_client(groq_fallback_key)
                 st.info("🔄 Fallback key ready")
             except Exception:
-                st.warning("⚠️ Fallback key appears invalid")
+                st.warning("⚠️ Fallback key invalid")
 
         st.divider()
 
         # ── Privacy ────────────────────────────────────────────────────────────
         st.subheader("🛡️ Privacy Settings")
-        mask_pii_enabled = st.checkbox(
-            "Enable PII Masking",
-            value=True,
-            help="Redact emails and phone numbers before sending to LLM",
-        )
+        mask_pii_enabled = st.checkbox("Enable PII Masking", value=True)
 
         st.divider()
 
-        # ── SharePoint (Microsoft Graph API) ───────────────────────────────────
-        st.subheader("☁️ SharePoint (Azure App)")
+        # ── SharePoint Configuration ───────────────────────────────────────────
+        sp = st.session_state.sharepoint_config
 
-        if not SHAREPOINT_AVAILABLE:
-            st.error("⚠️ `msal` library not installed.")
-            if SHAREPOINT_ERROR:
-                with st.expander("Error details"):
-                    st.code(SHAREPOINT_ERROR)
-            st.code("pip install msal", language="bash")
-        else:
-            sp = st.session_state.sharepoint_config
+        st.subheader("☁️ SharePoint")
 
-            with st.expander("🔐 Azure AD Credentials", expanded=not sp.get('connected')):
-                sp['tenant_id'] = st.text_input(
-                    "Tenant ID", value=sp.get('tenant_id', ''),
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-                    key="sp_tenant",
-                )
-                sp['client_id'] = st.text_input(
-                    "Client ID", value=sp.get('client_id', ''),
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-                    key="sp_client",
-                )
-                sp['client_secret'] = st.text_input(
-                    "Client Secret", value=sp.get('client_secret', ''),
-                    type="password", key="sp_secret",
-                )
+        with st.expander("☁️ SharePoint Configuration", expanded=False):
+            st.info("Loaded from .env file")
+            st.text(f"Site ID: {sp.get('site_id')}")
+            st.text(f"Drive ID: {sp.get('drive_id')}")
+            st.text(f"Input Folder: {sp.get('input_folder_path')}")
+            st.text(f"Output Folder: {sp.get('output_folder_path')}")
 
-            with st.expander("📁 Site & Drive IDs", expanded=not sp.get('connected')):
-                st.caption("Run `find_my_id.py` once to get these values.")
-                sp['site_id'] = st.text_input(
-                    "Site ID", value=sp.get('site_id', ''),
-                    placeholder="tenant.sharepoint.com,guid,guid",
-                    key="sp_site_id",
-                )
-                sp['drive_id'] = st.text_input(
-                    "Drive ID", value=sp.get('drive_id', ''),
-                    placeholder="b!xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                    key="sp_drive_id",
-                )
-                sp['folder_path'] = st.text_input(
-                    "Folder Path (in drive)",
-                    value=sp.get('folder_path', 'Shared Documents/Resumes'),
-                    placeholder="Demair  or  General/Resumes",
-                    key="sp_folder",
-                )
+        if st.button("🔗 Connect to SharePoint", use_container_width=True):
 
-            if st.button("🔗 Connect to SharePoint", type="primary", use_container_width=True):
-                required = [sp.get('tenant_id'), sp.get('client_id'),
-                            sp.get('client_secret'), sp.get('site_id'), sp.get('drive_id')]
-                if all(required):
-                    with st.spinner("Authenticating with Azure AD…"):
-                        try:
-                            import msal
-                            authority = f"https://login.microsoftonline.com/{sp['tenant_id']}"
-                            msal_app = msal.ConfidentialClientApplication(
-                                sp['client_id'],
-                                authority=authority,
-                                client_credential=sp['client_secret'],
-                            )
-                            token_res = msal_app.acquire_token_for_client(
-                                scopes=["https://graph.microsoft.com/.default"]
-                            )
-                            if "access_token" in token_res:
-                                sp['connected'] = True
-                                st.session_state.sharepoint_config = sp
-                                st.success("✅ Connected to SharePoint!")
-                                st.rerun()
-                            else:
-                                st.error(f"Auth failed: {token_res.get('error_description')}")
-                        except Exception as e:
-                            st.error(f"Connection error: {e}")
-                else:
-                    st.error("Please fill in all SharePoint credentials and IDs.")
+            required = [
+                sp.get('tenant_id'),
+                sp.get('client_id'),
+                sp.get('client_secret'),
+                sp.get('site_id'),
+                sp.get('drive_id')
+            ]
 
-            if sp.get('connected'):
-                st.success("✅ SharePoint Connected")
-                if st.button("🔌 Disconnect", use_container_width=True):
-                    sp['connected'] = False
-                    st.session_state.sharepoint_config = sp
-                    st.rerun()
+            if all(required):
+                try:
+                    import msal
 
-        st.divider()
+                    authority = f"https://login.microsoftonline.com/{sp['tenant_id']}"
+
+                    msal_app = msal.ConfidentialClientApplication(
+                        sp['client_id'],
+                        authority=authority,
+                        client_credential=sp['client_secret'],
+                    )
+
+                    token_res = msal_app.acquire_token_for_client(
+                        scopes=["https://graph.microsoft.com/.default"]
+                    )
+
+                    if "access_token" in token_res:
+                        sp['connected'] = True
+                        st.session_state.sharepoint_config = sp
+                        st.success("✅ SharePoint Connected")
+                        st.rerun()
+                    else:
+                        st.error("Auth failed")
+
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+
+            else:
+                st.error("Missing values in .env")
 
         # ── Date Filter ────────────────────────────────────────────────────────
         st.subheader("📅 Resume Submission Date Range")
         use_date_filter = st.checkbox("Enable date range filter", value=False)
 
         start_date = end_date = None
+
         if use_date_filter:
             if st.session_state.candidates_df is not None and 'submission_date' in st.session_state.candidates_df.columns:
                 try:
@@ -225,6 +183,7 @@ def main():
                 except Exception:
                     min_date = datetime.now().date() - timedelta(days=90)
                     max_date = datetime.now().date()
+
             else:
                 min_date = datetime.now().date() - timedelta(days=90)
                 max_date = datetime.now().date()
@@ -236,26 +195,20 @@ def main():
                 value=(min_date, max_date),
                 format="YYYY-MM-DD",
             )
+
             start_date, end_date = date_range
-            st.info(f"📅 Filtering: {start_date} to {end_date}")
 
         st.divider()
 
         # ── Top N ──────────────────────────────────────────────────────────────
-        st.subheader("🎚️ Top Candidates to Review")
+        st.subheader("🎚️ Top Candidates")
         top_n = st.select_slider(
             "Select number",
             options=[1, 2, 3, 5, 10, 15, 20],
             value=5,
         )
-        if top_n <= 3:
-            st.warning("⚡ Urgent hiring mode")
-        elif top_n <= 5:
-            st.info("📅 Standard recruitment")
-        else:
-            st.success("🕐 Comprehensive review")
 
-    # ── Store config in session state ──────────────────────────────────────────
+    # ── Store config ───────────────────────────────────────────────────────────
     st.session_state['mask_pii_enabled'] = mask_pii_enabled
     st.session_state['use_date_filter'] = use_date_filter
     st.session_state['start_date'] = start_date
@@ -281,14 +234,7 @@ def main():
     with tab4:
         render_analytics_tab()
 
-    # ── Footer ─────────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("""
-    <div style="text-align: center; color: #666; padding: 20px;">
-        <p>AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
-        <p style="font-size: 0.85em;">© 2026 NEXTURN. All rights reserved.</p>
-    </div>
-    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
