@@ -42,109 +42,81 @@ def _sp_connected():
 
 def render_upload_tab():
     """Render the Upload Resumes tab"""
-    st.header("Step 1: Upload & Parse Resumes")
+    st.header("Step 1: Upload/Retrieve Resumes")
 
     client = st.session_state.get('client')
     mask_pii_enabled = st.session_state.get('mask_pii_enabled', True)
 
+    # Label changed from "SharePoint Integration" to "SharePoint"
     upload_method = st.radio(
         "Choose upload method:",
-        ["📁 Manual Upload", "☁️ SharePoint Integration"],
+        ["📁 Manual Upload", "☁️ SharePoint"],
         horizontal=True,
     )
 
     # ── SharePoint Upload Mode ─────────────────────────────────────────────────
-    if upload_method == "☁️ SharePoint Integration":
-        st.subheader("SharePoint Integration")
+    if upload_method == "☁️ SharePoint":
+        st.subheader("SharePoint")
 
         if not SHAREPOINT_AVAILABLE:
             st.error("⚠️ `msal` library not available. Install it with `pip install msal`.")
             return
 
         if not _sp_connected():
-            st.warning("⚠️ SharePoint is not connected. Please fill in the credentials in the sidebar and click **Connect to SharePoint**.")
+            st.warning("⚠️ SharePoint is not connected. Please configure the credentials in the sidebar and click **Connect to SharePoint**.")
             return
 
+        # Show connected status then directly show Download button — no radio choice
         st.success("✅ SharePoint Connected")
 
-        sharepoint_action = st.radio(
-            "Choose SharePoint action:",
-            ["📥 Download Resumes from SharePoint", "📤 Upload Resumes to SharePoint"],
-            horizontal=True,
-        )
+        if st.button("📥 Download All Resumes", type="primary"):
+            with st.spinner("Fetching resumes from SharePoint…"):
+                sp = _sp_config()
+                downloaded_files = download_from_sharepoint(sp)
 
-        if sharepoint_action == "📥 Download Resumes from SharePoint":
-            if st.button("📥 Download All Resumes", type="primary"):
-                with st.spinner("Downloading resumes from SharePoint…"):
-                    sp = _sp_config()
-                    downloaded_files = download_from_sharepoint(sp)
+                if downloaded_files and client:
+                    st.success(f"✅ Retrieved {len(downloaded_files)} files from SharePoint")
 
-                    if downloaded_files and client:
-                        st.success(f"✅ Downloaded {len(downloaded_files)} files from SharePoint")
+                    progress = st.progress(0)
+                    status = st.empty()
 
-                        progress = st.progress(0)
-                        status = st.empty()
+                    st.session_state.parsed_resumes = []
+                    st.session_state.resume_texts = {}
+                    st.session_state.resume_metadata = {}
 
-                        st.session_state.parsed_resumes = []
-                        st.session_state.resume_texts = {}
-                        st.session_state.resume_metadata = {}
+                    for idx, file_data in enumerate(downloaded_files):
+                        status.text(f"Reading: {file_data['name']}")
+                        text = extract_text_from_file(file_data)
 
-                        for idx, file_data in enumerate(downloaded_files):
-                            status.text(f"Processing: {file_data['name']}")
-                            text = extract_text_from_file(file_data)
+                        if text:
+                            upload_date = file_data.get('timestamp', datetime.now().isoformat())
+                            if isinstance(upload_date, str):
+                                try:
+                                    upload_date = datetime.fromisoformat(
+                                        upload_date.replace('Z', '+00:00')
+                                    ).strftime("%Y-%m-%d %H:%M:%S")
+                                except Exception:
+                                    upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                            if text:
-                                upload_date = file_data.get('timestamp', datetime.now().isoformat())
-                                if isinstance(upload_date, str):
-                                    try:
-                                        upload_date = datetime.fromisoformat(
-                                            upload_date.replace('Z', '+00:00')
-                                        ).strftime("%Y-%m-%d %H:%M:%S")
-                                    except Exception:
-                                        upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            parsed = parse_resume_with_groq(client, text, file_data['name'], mask_pii_enabled, upload_date)
+                            if parsed:
+                                st.session_state.parsed_resumes.append(parsed)
+                                st.session_state.resume_texts[parsed.get('name', '')] = text
+                                st.session_state.resume_metadata[parsed.get('name', '')] = {
+                                    'submission_date': upload_date,
+                                    'filename': file_data['name'],
+                                }
 
-                                parsed = parse_resume_with_groq(client, text, file_data['name'], mask_pii_enabled, upload_date)
-                                if parsed:
-                                    st.session_state.parsed_resumes.append(parsed)
-                                    st.session_state.resume_texts[parsed.get('name', '')] = text
-                                    st.session_state.resume_metadata[parsed.get('name', '')] = {
-                                        'submission_date': upload_date,
-                                        'filename': file_data['name'],
-                                    }
+                        progress.progress((idx + 1) / len(downloaded_files))
 
-                            progress.progress((idx + 1) / len(downloaded_files))
+                    status.empty()
+                    progress.empty()
 
-                        status.empty()
-                        progress.empty()
-
-                        if st.session_state.parsed_resumes:
-                            st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-                            st.success(f"✅ Successfully parsed {len(st.session_state.parsed_resumes)} resumes from SharePoint!")
-                    elif not downloaded_files:
-                        st.warning("No PDF/DOCX files found in the configured SharePoint folder.")
-
-        else:  # Upload to SharePoint
-            st.info("📤 Upload resumes manually below — they will be saved to the configured SharePoint folder.")
-
-            uploaded_files_sp = st.file_uploader(
-                "Upload Resumes to SharePoint",
-                type=['pdf', 'docx'],
-                accept_multiple_files=True,
-                help="Upload resumes to save to SharePoint",
-                key="sharepoint_upload",
-            )
-
-            if uploaded_files_sp:
-                if st.button("📤 Upload to SharePoint", type="primary"):
-                    sp = _sp_config()
-                    success_count = 0
-                    for file in uploaded_files_sp:
-                        file_content = file.read()
-                        file.seek(0)
-                        if upload_to_sharepoint(sp, file_content, file.name):
-                            success_count += 1
-                    if success_count > 0:
-                        st.success(f"✅ Uploaded {success_count}/{len(uploaded_files_sp)} files to SharePoint!")
+                    if st.session_state.parsed_resumes:
+                        st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
+                        st.success(f"✅ {len(st.session_state.parsed_resumes)} resumes have been read and are ready for review!")
+                elif not downloaded_files:
+                    st.warning("No PDF/DOCX files found in the configured SharePoint folder.")
 
     # ── Manual Upload Mode ─────────────────────────────────────────────────────
     else:
@@ -158,10 +130,10 @@ def render_upload_tab():
             )
         with col2:
             st.metric("📁 Uploaded", len(uploaded_files) if uploaded_files else 0)
-            st.metric("✅ Parsed", len(st.session_state.parsed_resumes))
+            st.metric("✅ Ready", len(st.session_state.parsed_resumes))
 
         if uploaded_files and client:
-            if st.button("🚀 Parse All Resumes", type="primary"):
+            if st.button("🚀 Process All Resumes", type="primary"):
                 progress = st.progress(0)
                 status = st.empty()
 
@@ -170,7 +142,7 @@ def render_upload_tab():
                 st.session_state.resume_metadata = {}
 
                 for idx, file in enumerate(uploaded_files):
-                    status.text(f"Processing: {file.name}")
+                    status.text(f"Reading: {file.name}")
                     text = extract_text_from_file(file)
 
                     if text:
@@ -191,32 +163,19 @@ def render_upload_tab():
 
                 if st.session_state.parsed_resumes:
                     st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-                    st.success(f"✅ Successfully parsed {len(st.session_state.parsed_resumes)} resumes!")
-
-                    # Option to save to SharePoint
-                    if _sp_connected():
-                        if st.button("💾 Save to SharePoint"):
-                            sp = _sp_config()
-                            for file in uploaded_files:
-                                file_content = file.read()
-                                file.seek(0)
-                                upload_to_sharepoint(sp, file_content, file.name)
-
-                            csv_filename = f"parsed_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                            if save_csv_to_sharepoint(sp, st.session_state.candidates_df, csv_filename):
-                                st.success("✅ Resumes and parsed data saved to SharePoint!")
+                    st.success(f"✅ {len(st.session_state.parsed_resumes)} resumes have been read and are ready for review!")
 
                     csv_buffer = io.StringIO()
                     st.session_state.candidates_df.to_csv(csv_buffer, index=False)
                     st.download_button(
-                        "💾 Download Parsed Data (CSV)",
+                        "💾 Download Resume Data (CSV)",
                         csv_buffer.getvalue(),
                         f"candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         "text/csv",
                     )
 
         if st.session_state.parsed_resumes:
-            st.subheader("Recently Parsed Resumes (Preview)")
+            st.subheader("Recently Processed Resumes (Preview)")
             for resume in st.session_state.parsed_resumes[:3]:
                 with st.expander(f"👤 {resume.get('name', 'Unknown')}"):
                     col1, col2 = st.columns(2)
@@ -303,6 +262,38 @@ def render_database_tab():
                 border-radius: 8px 8px 0 0; margin-top: 10px;
                 color: #3F51B5; font-size: 16px;
             }
+            
+            /* Target Streamlit checkboxes - multiple selectors for compatibility */
+            [data-testid="stCheckbox"] input[type="checkbox"]:checked {
+                background-color: #4CAF50 !important;
+                border-color: #4CAF50 !important;
+                accent-color: #4CAF50 !important;
+            }
+            
+            /* For newer Streamlit versions */
+            [data-testid="stCheckbox"] input[type="checkbox"]:checked::before {
+                background-color: #4CAF50 !important;
+            }
+            
+            /* Target the checkbox container */
+            [data-testid="stCheckbox"] > label > div[data-baseweb="checkbox"] {
+                background-color: white !important;
+            }
+            
+            [data-testid="stCheckbox"] > label > div[data-baseweb="checkbox"]:has(input:checked) {
+                background-color: #4CAF50 !important;
+                border-color: #4CAF50 !important;
+            }
+            
+            /* Checkmark color */
+            [data-testid="stCheckbox"] svg {
+                color: white !important;
+            }
+            
+            /* Force accent color (works in many browsers) */
+            input[type="checkbox"] {
+                accent-color: #4CAF50 !important;
+            }
             </style>
             """, unsafe_allow_html=True)
 
@@ -328,13 +319,18 @@ def render_database_tab():
             st.markdown("---")
             close_col1, close_col2, close_col3 = st.columns([2, 1, 2])
             with close_col2:
-                if st.button("✓ Close", type="primary", use_container_width=True, key="close_dropdown"):
+                if st.button("Hide", type="primary", use_container_width=True, key="close_dropdown"):
                     st.session_state.show_column_selector = False
                     st.rerun()
 
         display_cols = st.session_state.selected_columns
         if display_cols:
             formatted_df = format_dataframe_for_display(filtered_df, display_cols)
+
+            # Sort table alphabetically by Candidate Name
+            if 'Candidate Name' in formatted_df.columns:
+                formatted_df = formatted_df.sort_values(by='Candidate Name').reset_index(drop=True)
+
             st.markdown("""
             <style>
             .dataframe { font-size: 16px !important; }
@@ -345,8 +341,16 @@ def render_database_tab():
             st.dataframe(formatted_df, use_container_width=True, height=400, hide_index=True)
 
         if not filtered_df.empty:
-            col1, col2 = st.columns(2)
-            with col1:
+            # Download/Save as radio choice
+            st.markdown("#### 💾 Save Candidate Data")
+            save_method = st.radio(
+                "Choose where to save:",
+                ["📥 Download as CSV", "☁️ Save to SharePoint"],
+                horizontal=True,
+                key="db_save_method",
+            )
+
+            if save_method == "📥 Download as CSV":
                 csv_buffer = io.StringIO()
                 filtered_df.to_csv(csv_buffer, index=False)
                 st.download_button(
@@ -355,22 +359,24 @@ def render_database_tab():
                     f"candidate_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     "text/csv",
                 )
-            with col2:
+            else:
                 if _sp_connected():
-                    if st.button("☁️ Save Database to SharePoint"):
+                    if st.button("☁️ Save Database to SharePoint", type="primary"):
                         sp = _sp_config()
                         csv_filename = f"candidate_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                         if save_csv_to_sharepoint(sp, filtered_df, csv_filename):
                             st.success("✅ Database saved to SharePoint!")
+                else:
+                    st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
     else:
-        st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
+        st.info("📤 Please upload and process resumes in the 'Upload Resumes' tab first")
 
 
 # ── Matching Tab ───────────────────────────────────────────────────────────────
 
 def render_matching_tab():
     """Render the Intelligent Matching tab"""
-    st.header("Step 2: Intelligent Candidate Matching")
+    st.header("Step 2: Candidate Matching")
 
     client = st.session_state.get('client')
     top_n = st.session_state.get('top_n', 5)
@@ -431,7 +437,7 @@ def render_matching_tab():
                                 if jd_requirements.get('preferred_skills'):
                                     st.write(f"**Preferred Skills:** {', '.join(jd_requirements.get('preferred_skills', []))}")
 
-                        with st.spinner("Pre-screening candidates…"):
+                        with st.spinner("Filtering candidates…"):
                             df_to_screen = st.session_state.candidates_df.copy()
                             if use_date_filter and start_date and end_date:
                                 try:
@@ -495,25 +501,40 @@ def render_matching_tab():
                                 prescreened_cols = ['name', 'email', 'experience_years', 'tech_stack', 'current_role']
                                 available_prescreened_cols = [col for col in prescreened_cols if col in filtered_df.columns]
                                 formatted_prescreened = format_dataframe_for_display(filtered_df, available_prescreened_cols)
+
+                                # Sort pre-screened table alphabetically too
+                                if 'Candidate Name' in formatted_prescreened.columns:
+                                    formatted_prescreened = formatted_prescreened.sort_values(by='Candidate Name').reset_index(drop=True)
+
                                 st.dataframe(formatted_prescreened, use_container_width=True, hide_index=True, height=300)
 
-                                csv_buffer = io.StringIO()
-                                filtered_df.to_csv(csv_buffer, index=False)
-                                col1, col2 = st.columns(2)
-                                with col1:
+                                # Pre-screened save as radio choice
+                                st.markdown("#### 💾 Save Pre-Screened Candidates")
+                                prescreened_save_method = st.radio(
+                                    "Choose where to save:",
+                                    ["📥 Download as CSV", "☁️ Save to SharePoint"],
+                                    horizontal=True,
+                                    key="prescreened_save_method",
+                                )
+
+                                if prescreened_save_method == "📥 Download as CSV":
+                                    csv_buffer = io.StringIO()
+                                    filtered_df.to_csv(csv_buffer, index=False)
                                     st.download_button(
                                         "📥 Download Pre-Screened Candidates (CSV)",
                                         csv_buffer.getvalue(),
                                         f"prescreened_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                         "text/csv",
                                     )
-                                with col2:
+                                else:
                                     if _sp_connected():
-                                        if st.button("☁️ Save to SharePoint"):
+                                        if st.button("☁️ Save to SharePoint", type="primary", key="save_prescreened_sp"):
                                             sp = _sp_config()
                                             csv_filename = f"prescreened_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                                             if save_csv_to_sharepoint(sp, filtered_df, csv_filename):
                                                 st.success("✅ Pre-screened candidates saved to SharePoint!")
+                                    else:
+                                        st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
 
                                 st.info(f"🎯 Now analysing top {top_n} candidates from the pre-screened pool…")
                                 with st.spinner(f"Analysing top {top_n} candidates…"):
@@ -591,7 +612,7 @@ def render_matching_tab():
                         st.write(f"**🚀 Key Projects:** {cand_data.get('key_projects')}")
 
                         if st.button(f"🎤 Generate Interview Questions", key=f"q_{rank}"):
-                            with st.spinner("Generating personalised interview questions…"):
+                            with st.spinner("Preparing interview questions…"):
                                 questions = generate_interview_questions(client, cand_data, job_desc)
                                 if questions:
                                     st.markdown("---")
@@ -606,9 +627,17 @@ def render_matching_tab():
 
                 st.markdown("---")
 
+            # Matching results save as radio choice
             results_df = pd.DataFrame(st.session_state.matched_results)
-            col1, col2 = st.columns(2)
-            with col1:
+            st.markdown("#### 💾 Save Matching Results")
+            match_save_method = st.radio(
+                "Choose where to save:",
+                ["📥 Download as CSV", "☁️ Save to SharePoint"],
+                horizontal=True,
+                key="match_save_method",
+            )
+
+            if match_save_method == "📥 Download as CSV":
                 csv_buffer = io.StringIO()
                 results_df.to_csv(csv_buffer, index=False)
                 st.download_button(
@@ -618,15 +647,17 @@ def render_matching_tab():
                     "text/csv",
                     use_container_width=True,
                 )
-            with col2:
+            else:
                 if _sp_connected():
-                    if st.button("☁️ Save Matching Results to SharePoint", use_container_width=True):
+                    if st.button("☁️ Save Matching Results to SharePoint", type="primary", use_container_width=True):
                         sp = _sp_config()
                         csv_filename = f"top_{len(st.session_state.matched_results)}_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                         if save_csv_to_sharepoint(sp, results_df, csv_filename):
                             st.success("✅ Matching results saved to SharePoint!")
+                else:
+                    st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
     else:
-        st.info("📤 Please upload and parse resumes in the 'Upload Resumes' tab first")
+        st.info("📤 Please upload and process resumes in the 'Upload Resumes' tab first")
 
 
 # ── Analytics Tab ──────────────────────────────────────────────────────────────
@@ -766,4 +797,4 @@ def render_analytics_tab():
             except Exception:
                 pass
     else:
-        st.info("📤 Please upload and parse resumes to view analytics")
+        st.info("📤 Please upload and process resumes to view analytics")
