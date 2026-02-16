@@ -139,7 +139,7 @@ def upload_to_sharepoint(config: dict, file_content: bytes, file_name: str) -> b
         uploader.upload_file(
             site_id=config["site_id"],
             drive_id=config["drive_id"],
-            folder_path=config["folder_path"],
+            folder_path=config["output_folder_path"],
             file_name=file_name,
             content=file_content,
         )
@@ -159,7 +159,7 @@ def download_from_sharepoint(config: dict) -> list:
         items = uploader.list_files(
             site_id=config["site_id"],
             drive_id=config["drive_id"],
-            folder_path=config["folder_path"],
+            folder_path=config["input_folder_path"],
         )
 
         downloaded = []
@@ -190,7 +190,7 @@ def save_csv_to_sharepoint(config: dict, df, filename: str) -> bool:
         uploader.upload_csv(
             site_id=config["site_id"],
             drive_id=config["drive_id"],
-            folder_path=config["folder_path"],
+            folder_path=config.get("output_folder_path", config["output_folder_path"]),
             file_name=filename,
             df=df,
         )

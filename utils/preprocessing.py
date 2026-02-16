@@ -36,30 +36,31 @@ def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False
 
     processed_text = mask_pii(resume_text) if mask_pii_enabled else resume_text
 
-    prompt = f"""You are an expert AI resume parser. Extract structured data from this resume.
+    json_template = """
+    {
+        "name": "full name",
+        "email": "email@example.com or null if not found",
+        "phone": "phone number or null if not found",
+        "experience_years": "numeric value (e.g., 5.5)",
+        "tech_stack": "comma-separated skills (Python, AWS, Docker, etc)",
+        "current_role": "most recent job title",
+        "education": "highest degree",
+        "key_projects": "brief summary of top achievements",
+        "certifications": "certifications or null",
+        "domain_expertise": "industry domain"
+    }"""
 
-IMPORTANT: Look carefully for email addresses and phone numbers in the resume text.
-Email format: name@domain.com
-Phone format: (XXX) XXX-XXXX or XXX-XXX-XXXX or similar variations
-
-Return valid JSON with this exact structure:
-{{
-    "name": "full name",
-    "email": "email@example.com or null if not found",
-    "phone": "phone number or null if not found",
-    "experience_years": numeric value (e.g., 5.5),
-    "tech_stack": "comma-separated skills (Python, AWS, Docker, etc)",
-    "current_role": "most recent job title",
-    "education": "highest degree",
-    "key_projects": "brief summary of top achievements",
-    "certifications": "certifications or null",
-    "domain_expertise": "industry domain"
-}}
-
-Resume:
-{processed_text[:6000]}
-
-Return ONLY JSON, no markdown or extra text."""
+    prompt = (
+        "You are an expert AI resume parser. Extract structured data from this resume.\n\n"
+        "IMPORTANT: Look carefully for email addresses and phone numbers in the resume text.\n"
+        "Email format: name@domain.com\n"
+        "Phone format: (XXX) XXX-XXXX or XXX-XXX-XXXX or similar variations\n\n"
+        "Return valid JSON with this exact structure:\n"
+        + json_template +
+        "\n\nResume:\n"
+        + processed_text[:6000] +
+        "\n\nReturn ONLY JSON, no markdown or extra text."
+    )
 
     try:
         chat_completion = create_groq_completion(
@@ -106,22 +107,59 @@ def extract_jd_requirements(client, job_description):
     """Extract minimum experience and required skills from JD automatically."""
     fallback_client = st.session_state.get('fallback_client')
 
-    prompt = f"""Analyze this job description and extract the requirements.
+    prompt = f"""You are a deterministic job description parser.
+
+Extract structured hiring requirements.
+
+RULES:
+- Extract only technical skills.
+- Ignore soft skills and culture statements.
+- If unclear → return empty or 0.
+- Output JSON only.
+
+EXAMPLE 1
+
+Job Description:
+"Junior Data Analyst required. Skills: SQL, Excel, Python."
+
+Output:
+{{
+  "minimum_experience_years": 0,
+  "required_technical_skills": ["SQL","Excel","Python"],
+  "preferred_skills": [],
+  "job_title": "Data Analyst",
+  "seniority_level": "Entry"
+}}
+
+EXAMPLE 2
+
+Job Description:
+"Looking for Senior DevOps Engineer (7+ years).
+Must have AWS, Kubernetes, Terraform.
+Preferred: Docker, Jenkins."
+
+Output:
+{{
+  "minimum_experience_years": 7,
+  "required_technical_skills": ["AWS","Kubernetes","Terraform"],
+  "preferred_skills": ["Docker","Jenkins"],
+  "job_title": "DevOps Engineer",
+  "seniority_level": "Senior"
+}}
+
+NOW PROCESS:
 
 JOB DESCRIPTION:
 {job_description}
 
-Return ONLY valid JSON with this structure:
+Return ONLY:
 {{
-    "minimum_experience_years": <number or 0 if not specified>,
-    "required_technical_skills": ["skill1", "skill2", "skill3"],
-    "preferred_skills": ["skill1", "skill2"],
-    "job_title": "extracted job title",
-    "seniority_level": "Entry/Mid/Senior/Lead"
-}}
-
-Extract actual technical skills (Python, AWS, Docker, etc), not soft skills.
-Return ONLY the JSON object, no extra text."""
+  "minimum_experience_years": 0,
+  "required_technical_skills": [],
+  "preferred_skills": [],
+  "job_title": "",
+  "seniority_level": ""
+}}"""
 
     try:
         chat_completion = create_groq_completion(

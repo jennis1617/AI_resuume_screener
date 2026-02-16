@@ -37,7 +37,8 @@ _defaults = {
         'client_secret': os.getenv('CLIENT_SECRET', ''),
         'site_id': os.getenv('SHAREPOINT_SITE_ID', ''),
         'drive_id': os.getenv('SHAREPOINT_DRIVE_ID', ''),
-        'folder_path': 'Shared Documents/Resumes',
+        'input_folder_path': os.getenv('INPUT_FOLDER_PATH'),
+        'output_folder_path': os.getenv('OUTPUT_FOLDER_PATH'),
         'connected': False,
     },
 }
