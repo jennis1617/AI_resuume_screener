@@ -203,7 +203,7 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs([
         "📤 Upload/Retrieve Resumes",
         "📊 Candidate Pool",
-        "🎯 AI Matching",
+        "🎯 Candidate Matching",
         "📈 Analytics Dashboard",
     ])
 

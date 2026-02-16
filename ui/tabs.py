@@ -563,19 +563,19 @@ def render_matching_tab():
                 rec = cand.get('recommendation', 'N/A')
                 priority = cand.get('interview_priority', 'Medium')
 
-                color = "#66BB6A" if final_score >= 80 else ("#FFA726" if final_score >= 60 else "#EF5350")
+                color = "#66BB6A" if final_score >= 80 else ("#97D360" if final_score >= 60 else "#D38754")
 
                 st.markdown(f"""
                 <div style="border-left: 5px solid {color}; padding: 20px; margin: 15px 0; background: #FAFAFA;
                             border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                     <h3 style="font-size: 18px;">#{rank} - {name}
-                        <span style="float: right; color: {color}; font-size: 1.8rem;">{final_score}%</span>
+                        <span style="float: right; text-align: center;">
+                            <span style="display: block; font-size: 0.75rem; color: #888; font-weight: 500; margin-bottom: 2px;">Overall Score</span>
+                            <span style="color: {color}; font-size: 1.8rem; font-weight: 700;">{final_score}%</span>
+                        </span>
                     </h3>
                     <p style="font-size: 16px; color: #555; margin-top: 5px;">📧 {email}</p>
                     <p style="font-size: 16px;"><strong>🎯 {rec}</strong> | <strong>⚡ Interview Priority: {priority}</strong></p>
-                    <p style="font-size: 15px; color: #666; margin-top: 10px;">
-                        <strong>Match Score:</strong> {match}% | <strong>Resume-JD Compatibility:</strong> {semantic_score}%
-                    </p>
                 </div>
                 """, unsafe_allow_html=True)
 
