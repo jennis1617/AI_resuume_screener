@@ -1,5 +1,7 @@
 """
-UI Tab rendering functions - UPDATED WITH UI IMPROVEMENTS + GRAPH API SHAREPOINT
+UI Tab rendering functions - Upload and Analytics only.
+Candidate Review & Scoring is in ui/analysis_tab.py
+Candidate Pool is in ui/candidate_pool_tab.py
 """
 
 import streamlit as st
@@ -10,27 +12,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from utils.file_handlers import extract_text_from_file
-from utils.preprocessing import parse_resume_with_groq, extract_jd_requirements
-from utils.scoring import (
-    match_candidates_with_jd,
-    auto_pre_screen_candidates,
-    generate_interview_questions,
-    format_strengths_weaknesses,
-    format_dataframe_for_display,
-)
+from utils.preprocessing import parse_resume_with_groq
+from utils.scoring import format_dataframe_for_display
 from utils.sharepoint import (
     SHAREPOINT_AVAILABLE,
-    upload_to_sharepoint,
     download_from_sharepoint,
     save_csv_to_sharepoint,
 )
-from config.settings import JD_TEMPLATES
+from config.settings import COLUMN_DISPLAY_NAMES
 
-
-# ── Helper ─────────────────────────────────────────────────────────────────────
 
 def _sp_config():
-    """Return the current SharePoint config dict from session state."""
     return st.session_state.get('sharepoint_config', {})
 
 
@@ -47,36 +39,33 @@ def render_upload_tab():
     client = st.session_state.get('client')
     mask_pii_enabled = st.session_state.get('mask_pii_enabled', True)
 
-    # Label changed from "SharePoint Integration" to "SharePoint"
     upload_method = st.radio(
-        "Choose upload method:",
-        ["📁 Manual Upload", "☁️ SharePoint"],
+        "Where are the resumes coming from?",
+        ["📁 Upload Manually", "☁️ Retrieve from SharePoint"],
         horizontal=True,
     )
 
-    # ── SharePoint Upload Mode ─────────────────────────────────────────────────
-    if upload_method == "☁️ SharePoint":
+    # ── SharePoint ─────────────────────────────────────────────────────────────
+    if upload_method == "☁️ Retrieve from SharePoint":
         st.subheader("SharePoint")
 
         if not SHAREPOINT_AVAILABLE:
-            st.error("⚠️ `msal` library not available. Install it with `pip install msal`.")
+            st.error("⚠️ The SharePoint connection library is not installed. Run `pip install msal`.")
             return
 
         if not _sp_connected():
-            st.warning("⚠️ SharePoint is not connected. Please configure the credentials in the sidebar and click **Connect to SharePoint**.")
+            st.warning("⚠️ SharePoint is not connected. Please set up your credentials in the sidebar.")
             return
 
-        # Show connected status then directly show Download button — no radio choice
         st.success("✅ SharePoint Connected")
 
-        if st.button("📥 Download All Resumes", type="primary"):
-            with st.spinner("Fetching resumes from SharePoint…"):
+        if st.button("📥 Get All Resumes from SharePoint", type="primary"):
+            with st.spinner("Fetching resumes…"):
                 sp = _sp_config()
                 downloaded_files = download_from_sharepoint(sp)
 
                 if downloaded_files and client:
-                    st.success(f"✅ Retrieved {len(downloaded_files)} files from SharePoint")
-
+                    st.success(f"✅ Found {len(downloaded_files)} files in SharePoint")
                     progress = st.progress(0)
                     status = st.empty()
 
@@ -87,7 +76,6 @@ def render_upload_tab():
                     for idx, file_data in enumerate(downloaded_files):
                         status.text(f"Reading: {file_data['name']}")
                         text = extract_text_from_file(file_data)
-
                         if text:
                             upload_date = file_data.get('timestamp', datetime.now().isoformat())
                             if isinstance(upload_date, str):
@@ -97,8 +85,9 @@ def render_upload_tab():
                                     ).strftime("%Y-%m-%d %H:%M:%S")
                                 except Exception:
                                     upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                            parsed = parse_resume_with_groq(client, text, file_data['name'], mask_pii_enabled, upload_date)
+                            parsed = parse_resume_with_groq(
+                                client, text, file_data['name'], mask_pii_enabled, upload_date
+                            )
                             if parsed:
                                 st.session_state.parsed_resumes.append(parsed)
                                 st.session_state.resume_texts[parsed.get('name', '')] = text
@@ -106,7 +95,6 @@ def render_upload_tab():
                                     'submission_date': upload_date,
                                     'filename': file_data['name'],
                                 }
-
                         progress.progress((idx + 1) / len(downloaded_files))
 
                     status.empty()
@@ -114,26 +102,29 @@ def render_upload_tab():
 
                     if st.session_state.parsed_resumes:
                         st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-                        st.success(f"✅ {len(st.session_state.parsed_resumes)} resumes have been read and are ready for review!")
+                        st.success(
+                            f"✅ {len(st.session_state.parsed_resumes)} resumes ready! "
+                            "Go to **Candidate Review & Scoring** to continue."
+                        )
                 elif not downloaded_files:
-                    st.warning("No PDF/DOCX files found in the configured SharePoint folder.")
+                    st.warning("No PDF or Word files found in the configured SharePoint folder.")
 
-    # ── Manual Upload Mode ─────────────────────────────────────────────────────
+    # ── Manual Upload ──────────────────────────────────────────────────────────
     else:
         col1, col2 = st.columns([2, 1])
         with col1:
             uploaded_files = st.file_uploader(
-                "Upload Resumes (PDF or DOCX only)",
+                "Upload Resumes (PDF or Word files only)",
                 type=['pdf', 'docx'],
                 accept_multiple_files=True,
-                help="Upload resumes in PDF or DOCX format only",
+                help="Upload as many resumes as you need. PDF and Word formats are supported.",
             )
         with col2:
-            st.metric("📁 Uploaded", len(uploaded_files) if uploaded_files else 0)
-            st.metric("✅ Ready", len(st.session_state.parsed_resumes))
+            st.metric("📁 Files Selected", len(uploaded_files) if uploaded_files else 0)
+            st.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
 
         if uploaded_files and client:
-            if st.button("🚀 Process All Resumes", type="primary"):
+            if st.button("🚀 Read All Resumes", type="primary"):
                 progress = st.progress(0)
                 status = st.empty()
 
@@ -144,10 +135,11 @@ def render_upload_tab():
                 for idx, file in enumerate(uploaded_files):
                     status.text(f"Reading: {file.name}")
                     text = extract_text_from_file(file)
-
                     if text:
                         upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        parsed = parse_resume_with_groq(client, text, file.name, mask_pii_enabled, upload_date)
+                        parsed = parse_resume_with_groq(
+                            client, text, file.name, mask_pii_enabled, upload_date
+                        )
                         if parsed:
                             st.session_state.parsed_resumes.append(parsed)
                             st.session_state.resume_texts[parsed.get('name', '')] = text
@@ -155,7 +147,6 @@ def render_upload_tab():
                                 'submission_date': upload_date,
                                 'filename': file.name,
                             }
-
                     progress.progress((idx + 1) / len(uploaded_files))
 
                 status.empty()
@@ -163,508 +154,30 @@ def render_upload_tab():
 
                 if st.session_state.parsed_resumes:
                     st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-                    st.success(f"✅ {len(st.session_state.parsed_resumes)} resumes have been read and are ready for review!")
-
-                    csv_buffer = io.StringIO()
-                    st.session_state.candidates_df.to_csv(csv_buffer, index=False)
-                    st.download_button(
-                        "💾 Download Resume Data (CSV)",
-                        csv_buffer.getvalue(),
-                        f"candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        "text/csv",
+                    st.success(
+                        f"✅ {len(st.session_state.parsed_resumes)} resumes are ready! "
+                        "Go to the **Candidate Review & Scoring** tab to continue."
                     )
 
         if st.session_state.parsed_resumes:
-            st.subheader("Recently Processed Resumes (Preview)")
+            st.subheader("Resumes Loaded (Quick Preview)")
             for resume in st.session_state.parsed_resumes[:3]:
                 with st.expander(f"👤 {resume.get('name', 'Unknown')}"):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"**Experience:** {resume.get('experience_years')} years")
                         st.write(f"**Email:** {resume.get('email')}")
-                        st.write(f"**Submitted:** {resume.get('submission_date', 'N/A')}")
+                        st.write(f"**Received:** {resume.get('submission_date', 'N/A')}")
                     with col2:
                         st.write(f"**Current Role:** {resume.get('current_role')}")
-                        st.write(f"**Skills:** {resume.get('tech_stack', '')[:80]}...")
-
-
-# ── Database Tab ───────────────────────────────────────────────────────────────
-
-def render_database_tab():
-    """Render the Candidate Pool tab"""
-    from config.settings import COLUMN_DISPLAY_NAMES
-
-    st.header("Candidate Database")
-
-    use_date_filter = st.session_state.get('use_date_filter', False)
-    start_date = st.session_state.get('start_date')
-    end_date = st.session_state.get('end_date')
-
-    if st.session_state.candidates_df is not None:
-        df = st.session_state.candidates_df.copy()
-        total_candidates_count = len(st.session_state.candidates_df)
-
-        filtered_df = df.copy()
-        if use_date_filter and start_date and end_date:
-            try:
-                filtered_df['submission_date'] = pd.to_datetime(filtered_df['submission_date'])
-                filtered_df = filtered_df[
-                    (filtered_df['submission_date'].dt.date >= start_date) &
-                    (filtered_df['submission_date'].dt.date <= end_date)
-                ]
-            except Exception:
-                pass
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Candidates", total_candidates_count, help="Total resumes in database")
-        with col2:
-            in_range_count = len(filtered_df) if use_date_filter else total_candidates_count
-            st.metric("In Date Range", in_range_count, help="Candidates matching date filter")
-
-        st.divider()
-
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #E8EAF6 0%, #C5CAE9 100%);
-                    padding: 20px; border-radius: 10px; margin-bottom: 20px;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
-            <h3 style="color: #3F51B5; margin: 0 0 10px 0; font-size: 1.3rem;">
-                🔍 Customize Your Candidate View
-            </h3>
-            <p style="color: #5C6BC0; margin: 0; font-size: 1rem; line-height: 1.5;">
-                Select the columns below to filter and customize your candidate pool display.
-                Choose the data fields most relevant to your screening process.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        available_cols = list(filtered_df.columns)
-        default_cols = [col for col in ['name', 'email', 'experience_years', 'tech_stack', 'current_role', 'education']
-                        if col in available_cols]
-
-        if 'selected_columns' not in st.session_state:
-            st.session_state.selected_columns = default_cols.copy()
-        if 'show_column_selector' not in st.session_state:
-            st.session_state.show_column_selector = False
-
-        col_spacer, col_button = st.columns([5, 1])
-        with col_button:
-            if st.button("➕ Add Column", type="secondary", use_container_width=True, key="add_col_btn"):
-                st.session_state.show_column_selector = not st.session_state.show_column_selector
-                st.rerun()
-
-        if st.session_state.show_column_selector:
-            st.markdown("""
-            <style>
-            .checkbox-header {
-                font-weight: 600; padding: 10px 15px; background: white;
-                border: 1px solid #ddd; border-bottom: 2px solid #3F51B5;
-                border-radius: 8px 8px 0 0; margin-top: 10px;
-                color: #3F51B5; font-size: 16px;
-            }
-            
-            /* Target Streamlit checkboxes - multiple selectors for compatibility */
-            [data-testid="stCheckbox"] input[type="checkbox"]:checked {
-                background-color: #4CAF50 !important;
-                border-color: #4CAF50 !important;
-                accent-color: #4CAF50 !important;
-            }
-            
-            /* For newer Streamlit versions */
-            [data-testid="stCheckbox"] input[type="checkbox"]:checked::before {
-                background-color: #4CAF50 !important;
-            }
-            
-            /* Target the checkbox container */
-            [data-testid="stCheckbox"] > label > div[data-baseweb="checkbox"] {
-                background-color: white !important;
-            }
-            
-            [data-testid="stCheckbox"] > label > div[data-baseweb="checkbox"]:has(input:checked) {
-                background-color: #4CAF50 !important;
-                border-color: #4CAF50 !important;
-            }
-            
-            /* Checkmark color */
-            [data-testid="stCheckbox"] svg {
-                color: white !important;
-            }
-            
-            /* Force accent color (works in many browsers) */
-            input[type="checkbox"] {
-                accent-color: #4CAF50 !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-
-            st.markdown('<div class="checkbox-header">📋 Select Columns to Display</div>', unsafe_allow_html=True)
-
-            num_cols_per_row = 4
-            for i in range(0, len(available_cols), num_cols_per_row):
-                cols = st.columns(num_cols_per_row)
-                for j, col_widget in enumerate(cols):
-                    col_index = i + j
-                    if col_index < len(available_cols):
-                        col = available_cols[col_index]
-                        display_name = COLUMN_DISPLAY_NAMES.get(col, col)
-                        is_selected = col in st.session_state.selected_columns
-                        with col_widget:
-                            if st.checkbox(display_name, value=is_selected, key=f"col_check_{col}"):
-                                if col not in st.session_state.selected_columns:
-                                    st.session_state.selected_columns.append(col)
-                            else:
-                                if col in st.session_state.selected_columns:
-                                    st.session_state.selected_columns.remove(col)
-
-            st.markdown("---")
-            close_col1, close_col2, close_col3 = st.columns([2, 1, 2])
-            with close_col2:
-                if st.button("Hide", type="primary", use_container_width=True, key="close_dropdown"):
-                    st.session_state.show_column_selector = False
-                    st.rerun()
-
-        display_cols = st.session_state.selected_columns
-        if display_cols:
-            formatted_df = format_dataframe_for_display(filtered_df, display_cols)
-
-            # Sort table alphabetically by Candidate Name
-            if 'Candidate Name' in formatted_df.columns:
-                formatted_df = formatted_df.sort_values(by='Candidate Name').reset_index(drop=True)
-
-            st.markdown("""
-            <style>
-            .dataframe { font-size: 16px !important; }
-            .dataframe th { font-size: 17px !important; font-weight: 600 !important; }
-            .dataframe td { font-size: 16px !important; }
-            </style>
-            """, unsafe_allow_html=True)
-            st.dataframe(formatted_df, use_container_width=True, height=400, hide_index=True)
-
-        if not filtered_df.empty:
-            # Download/Save as radio choice
-            st.markdown("#### 💾 Save Candidate Data")
-            save_method = st.radio(
-                "Choose where to save:",
-                ["📥 Download as CSV", "☁️ Save to SharePoint"],
-                horizontal=True,
-                key="db_save_method",
-            )
-
-            if save_method == "📥 Download as CSV":
-                csv_buffer = io.StringIO()
-                filtered_df.to_csv(csv_buffer, index=False)
-                st.download_button(
-                    "📥 Download Database (CSV)",
-                    csv_buffer.getvalue(),
-                    f"candidate_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    "text/csv",
-                )
-            else:
-                if _sp_connected():
-                    if st.button("☁️ Save Database to SharePoint", type="primary"):
-                        sp = _sp_config()
-                        csv_filename = f"candidate_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                        if save_csv_to_sharepoint(sp, filtered_df, csv_filename):
-                            st.success("✅ Database saved to SharePoint!")
-                else:
-                    st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
-    else:
-        st.info("📤 Please upload and process resumes in the 'Upload Resumes' tab first")
-
-
-# ── Matching Tab ───────────────────────────────────────────────────────────────
-
-def render_matching_tab():
-    """Render the Intelligent Matching tab"""
-    st.header("Step 2: Candidate Matching")
-
-    client = st.session_state.get('client')
-    top_n = st.session_state.get('top_n', 5)
-    use_date_filter = st.session_state.get('use_date_filter', False)
-    start_date = st.session_state.get('start_date')
-    end_date = st.session_state.get('end_date')
-
-    if st.session_state.candidates_df is not None:
-        st.subheader("📌 Job Description Input")
-        jd_input_mode = st.radio(
-            "Choose input method:",
-            ["Paste Text", "Upload File (PDF/DOCX)"],
-            horizontal=True,
-        )
-
-        job_desc = ""
-
-        if jd_input_mode == "Upload File (PDF/DOCX)":
-            jd_file = st.file_uploader("Upload Job Description", type=['pdf', 'docx'], key="jd_upload")
-            if jd_file:
-                jd_text = extract_text_from_file(jd_file)
-                if jd_text:
-                    job_desc = jd_text
-                    st.success("✅ Job description loaded successfully!")
-                    with st.expander("Preview Job Description"):
-                        st.text(job_desc[:500] + "..." if len(job_desc) > 500 else job_desc)
-        else:
-            jd_template = st.selectbox(
-                "Quick Template (Optional)",
-                ["Custom", "Senior Python Developer", "Data Scientist", "DevOps Engineer"],
-            )
-            job_desc = st.text_area(
-                "Job Description",
-                value=JD_TEMPLATES.get(jd_template, ""),
-                height=300,
-                placeholder="Paste or type the complete job description here…",
-            )
-
-        if job_desc and client:
-            st.divider()
-            st.subheader("Pre-Screening Analysis")
-
-            if st.button("Analyze JD & Match Candidates", type="primary", use_container_width=True):
-                with st.spinner("Analyzing job requirements…"):
-                    jd_requirements = extract_jd_requirements(client, job_desc)
-
-                    if jd_requirements:
-                        st.success("✅ Job requirements extracted successfully!")
-
-                        with st.expander("📋 Extracted Requirements from Job Description", expanded=True):
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.write(f"**Job Title:** {jd_requirements.get('job_title', 'N/A')}")
-                                st.write(f"**Seniority Level:** {jd_requirements.get('seniority_level', 'N/A')}")
-                                st.write(f"**Minimum Experience:** {jd_requirements.get('minimum_experience_years', 0)} years")
-                            with col2:
-                                st.write(f"**Required Skills:** {', '.join(jd_requirements.get('required_technical_skills', []))}")
-                                if jd_requirements.get('preferred_skills'):
-                                    st.write(f"**Preferred Skills:** {', '.join(jd_requirements.get('preferred_skills', []))}")
-
-                        with st.spinner("Filtering candidates…"):
-                            df_to_screen = st.session_state.candidates_df.copy()
-                            if use_date_filter and start_date and end_date:
-                                try:
-                                    df_to_screen['submission_date'] = pd.to_datetime(df_to_screen['submission_date'])
-                                    df_to_screen = df_to_screen[
-                                        (df_to_screen['submission_date'].dt.date >= start_date) &
-                                        (df_to_screen['submission_date'].dt.date <= end_date)
-                                    ]
-                                except Exception:
-                                    pass
-
-                            filtered_df, screening_summary = auto_pre_screen_candidates(df_to_screen, jd_requirements)
-
-                            if screening_summary:
-                                st.markdown("### Pre-Screening Results")
-                                if len(screening_summary) > 0 and "weighs in both" in screening_summary[0]:
-                                    st.markdown(f'''
-                                    <div style="background: linear-gradient(135deg, rgba(227,242,253,0.5) 0%, rgba(187,222,251,0.5) 100%);
-                                                padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5;
-                                                box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600;
-                                                color: #1976D2; margin: 15px 0;">
-                                        {screening_summary[0]}
-                                    </div>
-                                    ''', unsafe_allow_html=True)
-
-                                if len(screening_summary) >= 3:
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        if len(screening_summary) > 1:
-                                            st.markdown(f'''
-                                            <div style="background: linear-gradient(135deg, rgba(227,242,253,0.5) 0%, rgba(187,222,251,0.5) 100%);
-                                                        padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5;
-                                                        box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600;
-                                                        color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
-                                                {screening_summary[1]}
-                                            </div>
-                                            ''', unsafe_allow_html=True)
-                                    with col2:
-                                        if len(screening_summary) > 2:
-                                            st.markdown(f'''
-                                            <div style="background: linear-gradient(135deg, rgba(227,242,253,0.5) 0%, rgba(187,222,251,0.5) 100%);
-                                                        padding: 15px 25px; border-radius: 25px; border-left: 4px solid #42A5F5;
-                                                        box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600;
-                                                        color: #1976D2; margin: 10px 0; min-height: 80px; display: flex; align-items: center;">
-                                                {screening_summary[2]}
-                                            </div>
-                                            ''', unsafe_allow_html=True)
-
-                                    if len(screening_summary) > 3:
-                                        st.markdown(f'''
-                                        <div style="background: linear-gradient(135deg, rgba(200,230,201,0.5) 0%, rgba(165,214,167,0.5) 100%);
-                                                    padding: 15px 25px; border-radius: 25px; border-left: 4px solid #66BB6A;
-                                                    box-shadow: 0 2px 6px rgba(0,0,0,0.1); font-size: 16px; font-weight: 600;
-                                                    color: #2E7D32; margin: 15px 0;">
-                                            {screening_summary[3]}
-                                        </div>
-                                        ''', unsafe_allow_html=True)
-
-                            if not filtered_df.empty:
-                                st.subheader("✅ Pre-Screened Candidates")
-                                prescreened_cols = ['name', 'email', 'experience_years', 'tech_stack', 'current_role']
-                                available_prescreened_cols = [col for col in prescreened_cols if col in filtered_df.columns]
-                                formatted_prescreened = format_dataframe_for_display(filtered_df, available_prescreened_cols)
-
-                                # Sort pre-screened table alphabetically too
-                                if 'Candidate Name' in formatted_prescreened.columns:
-                                    formatted_prescreened = formatted_prescreened.sort_values(by='Candidate Name').reset_index(drop=True)
-
-                                st.dataframe(formatted_prescreened, use_container_width=True, hide_index=True, height=300)
-
-                                # Pre-screened save as radio choice
-                                st.markdown("#### 💾 Save Pre-Screened Candidates")
-                                prescreened_save_method = st.radio(
-                                    "Choose where to save:",
-                                    ["📥 Download as CSV", "☁️ Save to SharePoint"],
-                                    horizontal=True,
-                                    key="prescreened_save_method",
-                                )
-
-                                if prescreened_save_method == "📥 Download as CSV":
-                                    csv_buffer = io.StringIO()
-                                    filtered_df.to_csv(csv_buffer, index=False)
-                                    st.download_button(
-                                        "📥 Download Pre-Screened Candidates (CSV)",
-                                        csv_buffer.getvalue(),
-                                        f"prescreened_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                        "text/csv",
-                                    )
-                                else:
-                                    if _sp_connected():
-                                        if st.button("☁️ Save to SharePoint", type="primary", key="save_prescreened_sp"):
-                                            sp = _sp_config()
-                                            csv_filename = f"prescreened_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                                            if save_csv_to_sharepoint(sp, filtered_df, csv_filename):
-                                                st.success("✅ Pre-screened candidates saved to SharePoint!")
-                                    else:
-                                        st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
-
-                                st.info(f"🎯 Now analysing top {top_n} candidates from the pre-screened pool…")
-                                with st.spinner(f"Analysing top {top_n} candidates…"):
-                                    results = match_candidates_with_jd(client, filtered_df, job_desc, top_n)
-                                    if results:
-                                        st.session_state.matched_results = results
-                                        st.success(f"✅ Successfully ranked top {len(results)} candidates!")
-                            else:
-                                st.warning("⚠️ No candidates passed the pre-screening criteria. Consider adjusting the job requirements or uploading more resumes.")
-
-        # ── Display matched results ─────────────────────────────────────────────
-        if st.session_state.matched_results:
-            st.divider()
-            st.subheader(f"🏆 Top {len(st.session_state.matched_results)} Recommended Candidates")
-            st.info(f"📊 Showing top {len(st.session_state.matched_results)} candidates as per HR's selected number")
-
-            for cand in st.session_state.matched_results:
-                rank = cand.get('rank', 0)
-                name = cand.get('name', 'Unknown')
-                email = cand.get('email', 'N/A')
-                match = cand.get('match_percentage', 0)
-                semantic_score = cand.get('semantic_score', 0)
-                final_score = cand.get('final_score', match)
-                strengths = cand.get('strengths', 'N/A')
-                gaps = cand.get('gaps', 'N/A')
-                rec = cand.get('recommendation', 'N/A')
-                priority = cand.get('interview_priority', 'Medium')
-
-                color = "#66BB6A" if final_score >= 80 else ("#97D360" if final_score >= 60 else "#D38754")
-
-                st.markdown(f"""
-                <div style="border-left: 5px solid {color}; padding: 20px; margin: 15px 0; background: #FAFAFA;
-                            border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
-                    <h3 style="font-size: 18px;">#{rank} - {name}
-                        <span style="float: right; text-align: center;">
-                            <span style="display: block; font-size: 0.75rem; color: #888; font-weight: 500; margin-bottom: 2px;">Overall Score</span>
-                            <span style="color: {color}; font-size: 1.8rem; font-weight: 700;">{final_score}%</span>
-                        </span>
-                    </h3>
-                    <p style="font-size: 16px; color: #555; margin-top: 5px;">📧 {email}</p>
-                    <p style="font-size: 16px;"><strong>🎯 {rec}</strong> | <strong>⚡ Interview Priority: {priority}</strong></p>
-                </div>
-                """, unsafe_allow_html=True)
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**✅ Key Strengths:**")
-                    for item in format_strengths_weaknesses(strengths):
-                        st.markdown(f'<div class="strength-item" style="font-size: 15px;">• {item}</div>', unsafe_allow_html=True)
-                with col2:
-                    st.markdown("**⚠️ Areas for Consideration:**")
-                    weakness_items = format_strengths_weaknesses(gaps)
-                    if weakness_items and gaps != "None":
-                        for item in weakness_items:
-                            st.markdown(f'<div class="weakness-item" style="font-size: 15px;">• {item}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="strength-item" style="font-size: 15px;">• No significant gaps identified</div>', unsafe_allow_html=True)
-
-                cand_full = st.session_state.candidates_df[st.session_state.candidates_df['name'] == name]
-                if not cand_full.empty:
-                    cand_data = cand_full.iloc[0].to_dict()
-                    with st.expander(f"📋 View Complete Profile - {name}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**📧 Email:** {cand_data.get('email')}")
-                            st.write(f"**📱 Phone:** {cand_data.get('phone')}")
-                            st.write(f"**💼 Experience:** {cand_data.get('experience_years')} years")
-                            st.write(f"**📅 Resume Received:** {cand_data.get('submission_date', 'N/A')}")
-                        with col2:
-                            st.write(f"**🎯 Current Role:** {cand_data.get('current_role')}")
-                            st.write(f"**🎓 Education:** {cand_data.get('education')}")
-                            st.write(f"**🏆 Certifications:** {cand_data.get('certifications', 'None')}")
-
-                        st.write(f"**💻 Technical Skills:** {cand_data.get('tech_stack')}")
-                        st.write(f"**🚀 Key Projects:** {cand_data.get('key_projects')}")
-
-                        if st.button(f"🎤 Generate Interview Questions", key=f"q_{rank}"):
-                            with st.spinner("Preparing interview questions…"):
-                                questions = generate_interview_questions(client, cand_data, job_desc)
-                                if questions:
-                                    st.markdown("---")
-                                    st.subheader(f"Interview Questions for {name}")
-                                    for idx, q in enumerate(questions, 1):
-                                        st.markdown(f"""
-                                        **Question {idx} ({q.get('category')}):**
-                                        {q.get('question')}
-                                        *💡 Why we're asking: {q.get('why_asking')}*
-                                        """)
-                                        st.divider()
-
-                st.markdown("---")
-
-            # Matching results save as radio choice
-            results_df = pd.DataFrame(st.session_state.matched_results)
-            st.markdown("#### 💾 Save Matching Results")
-            match_save_method = st.radio(
-                "Choose where to save:",
-                ["📥 Download as CSV", "☁️ Save to SharePoint"],
-                horizontal=True,
-                key="match_save_method",
-            )
-
-            if match_save_method == "📥 Download as CSV":
-                csv_buffer = io.StringIO()
-                results_df.to_csv(csv_buffer, index=False)
-                st.download_button(
-                    "📊 Download Matching Results (CSV)",
-                    csv_buffer.getvalue(),
-                    f"top_{len(st.session_state.matched_results)}_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    "text/csv",
-                    use_container_width=True,
-                )
-            else:
-                if _sp_connected():
-                    if st.button("☁️ Save Matching Results to SharePoint", type="primary", use_container_width=True):
-                        sp = _sp_config()
-                        csv_filename = f"top_{len(st.session_state.matched_results)}_candidates_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                        if save_csv_to_sharepoint(sp, results_df, csv_filename):
-                            st.success("✅ Matching results saved to SharePoint!")
-                else:
-                    st.warning("⚠️ SharePoint is not connected. Please configure it in the sidebar.")
-    else:
-        st.info("📤 Please upload and process resumes in the 'Upload Resumes' tab first")
+                        st.write(f"**Skills:** {str(resume.get('tech_stack', ''))[:80]}…")
 
 
 # ── Analytics Tab ──────────────────────────────────────────────────────────────
 
 def render_analytics_tab():
-    """Render the Recruitment Analytics Dashboard tab"""
-    st.header("📈 Recruitment Analytics Dashboard")
+    """Render the Analytics Dashboard tab"""
+    st.header("📈 Analytics Dashboard")
 
     use_date_filter = st.session_state.get('use_date_filter', False)
     start_date = st.session_state.get('start_date')
@@ -676,38 +189,38 @@ def render_analytics_tab():
         if use_date_filter and start_date and end_date:
             try:
                 df['submission_date'] = pd.to_datetime(df['submission_date'])
-                df = df[(df['submission_date'].dt.date >= start_date) & (df['submission_date'].dt.date <= end_date)]
+                df = df[
+                    (df['submission_date'].dt.date >= start_date) &
+                    (df['submission_date'].dt.date <= end_date)
+                ]
             except Exception:
                 pass
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Candidate Pool", len(df))
+            st.metric("Total Resumes Uploaded", len(df))
         with col2:
-            if st.session_state.matched_results:
-                avg_match = sum(c['final_score'] for c in st.session_state.matched_results) / len(st.session_state.matched_results)
-                st.metric("Avg Match Score", f"{avg_match:.1f}%")
-            else:
-                st.metric("Avg Match Score", "N/A")
+            selected = st.session_state.get('selected_for_pool', set())
+            st.metric("In Candidate Pool", len(selected))
         with col3:
             unique_skills = len(set(', '.join(df['tech_stack'].astype(str)).split(', ')))
-            st.metric("Unique Skills in Pool", unique_skills)
+            st.metric("Different Skills Seen", unique_skills)
 
         st.divider()
 
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Experience Distribution")
+            st.subheader("Experience Levels")
             exp_bins = pd.cut(
-                df['experience_years'].astype(float),
+                pd.to_numeric(df['experience_years'], errors='coerce').fillna(0),
                 bins=[0, 2, 5, 10, 20],
-                labels=['0-2 years', '2-5 years', '5-10 years', '10+ years'],
+                labels=['0–2 years', '2–5 years', '5–10 years', '10+ years'],
             )
             exp_counts = exp_bins.value_counts().sort_index()
             fig = px.bar(
                 x=exp_counts.index.astype(str),
                 y=exp_counts.values,
-                labels={'x': 'Experience Range', 'y': 'Number of Candidates'},
+                labels={'x': 'Experience Level', 'y': 'Number of People'},
                 color=exp_counts.values,
                 color_continuous_scale='Blues',
             )
@@ -715,28 +228,32 @@ def render_analytics_tab():
             st.plotly_chart(fig, use_container_width=True)
 
         with col2:
-            if st.session_state.matched_results:
-                st.subheader("Candidate Match Scores")
-                scores = [c['final_score'] for c in st.session_state.matched_results]
-                names = [c['name'] for c in st.session_state.matched_results]
+            review_results = st.session_state.get('review_results')
+            if review_results:
+                st.subheader("Match Scores")
+                scores = [r['final_score'] for r in review_results]
+                names = [r['metadata'].get('name', '?') for r in review_results]
                 fig = go.Figure(data=[go.Bar(
                     x=scores, y=names, orientation='h',
                     marker=dict(
                         color=scores,
                         colorscale=[[0, '#FFCDD2'], [0.5, '#FFE082'], [1, '#C8E6C9']],
-                        showscale=True, colorbar=dict(title="Score"),
+                        showscale=True,
+                        colorbar=dict(title="Score"),
                     ),
-                    text=[f"{s}%" for s in scores], textposition='outside',
+                    text=[f"{s}%" for s in scores],
+                    textposition='outside',
                 )])
                 fig.update_layout(
-                    xaxis_title="Match Score (%)", yaxis_title="Candidate",
+                    xaxis_title="Match Score (%)",
+                    yaxis_title="Candidate",
                     yaxis=dict(autorange="reversed"),
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Run matching to see compatibility scores")
+                st.info("Run a review in the Candidate Review & Scoring tab to see match scores here.")
 
-        st.subheader("Top Skills in Candidate Pool")
+        st.subheader("Most Common Skills")
         skill_candidates = {}
         for _, row in df.iterrows():
             skills = str(row.get('tech_stack', '')).lower().split(',')
@@ -750,51 +267,63 @@ def render_analytics_tab():
         skill_counts = {skill: len(cands) for skill, cands in skill_candidates.items()}
         sorted_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:15]
 
-        skill_names = [s[0].title() for s in sorted_skills]
-        skill_values = [s[1] for s in sorted_skills]
-        skill_percentages = [(s[1] / total_candidates * 100) for s in sorted_skills]
+        if sorted_skills:
+            skill_names = [s[0].title() for s in sorted_skills]
+            skill_percentages = [(s[1] / total_candidates * 100) for s in sorted_skills]
 
-        hover_texts = []
-        for idx, skill_name in enumerate([s[0] for s in sorted_skills]):
-            candidates = skill_candidates[skill_name]
-            pct = skill_percentages[idx]
-            count = skill_values[idx]
-            if len(candidates) <= 8:
-                clist = '<br>   • '.join(candidates)
-                hover_texts.append(f"<b>{skill_name.title()}</b><br><br><b>Coverage:</b> {pct:.1f}% ({count}/{total_candidates})<br><br><b>Candidates:</b><br>   • {clist}")
-            else:
-                clist = '<br>   • '.join(candidates[:8])
-                hover_texts.append(f"<b>{skill_name.title()}</b><br><br><b>Coverage:</b> {pct:.1f}% ({count}/{total_candidates})<br><br><b>Candidates:</b><br>   • {clist}<br>   • …and {len(candidates)-8} more")
+            hover_texts = []
+            for i, skill_name in enumerate([s[0] for s in sorted_skills]):
+                candidates = skill_candidates[skill_name]
+                pct = skill_percentages[i]
+                count = skill_counts[skill_name]
+                if len(candidates) <= 8:
+                    clist = '<br>   • '.join(candidates)
+                    hover_texts.append(
+                        f"<b>{skill_name.title()}</b><br><br><b>How common:</b> {pct:.1f}% "
+                        f"({count}/{total_candidates})<br><br><b>Candidates:</b><br>   • {clist}"
+                    )
+                else:
+                    clist = '<br>   • '.join(candidates[:8])
+                    hover_texts.append(
+                        f"<b>{skill_name.title()}</b><br><br><b>How common:</b> {pct:.1f}% "
+                        f"({count}/{total_candidates})<br><br><b>Candidates:</b><br>   • {clist}"
+                        f"<br>   • …and {len(candidates) - 8} more"
+                    )
 
-        fig = go.Figure(data=[go.Bar(
-            y=skill_names[::-1], x=skill_percentages[::-1], orientation='h',
-            marker=dict(
-                color=skill_percentages[::-1], colorscale='Tealgrn', showscale=True,
-                colorbar=dict(title="Coverage %", titleside="right", ticksuffix="%"),
-            ),
-            text=[f"{p:.1f}%" for p in skill_percentages[::-1]], textposition='outside',
-            hovertext=hover_texts[::-1], hovertemplate='%{hovertext}<extra></extra>',
-        )])
-        fig.update_layout(
-            xaxis_title="Percentage of Candidates (%)", yaxis_title="Skill",
-            height=600, margin=dict(l=150),
-            hoverlabel=dict(bgcolor="white", font_size=15, font_family="Arial",
-                            font_color="black", bordercolor="#BDBDBD", align="left"),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            fig = go.Figure(data=[go.Bar(
+                y=skill_names[::-1], x=skill_percentages[::-1], orientation='h',
+                marker=dict(
+                    color=skill_percentages[::-1], colorscale='Tealgrn', showscale=True,
+                    colorbar=dict(title="% of Candidates", titleside="right", ticksuffix="%"),
+                ),
+                text=[f"{p:.1f}%" for p in skill_percentages[::-1]],
+                textposition='outside',
+                hovertext=hover_texts[::-1],
+                hovertemplate='%{hovertext}<extra></extra>',
+            )])
+            fig.update_layout(
+                xaxis_title="Percentage of Candidates (%)",
+                yaxis_title="Skill",
+                height=600,
+                margin=dict(l=150),
+                hoverlabel=dict(bgcolor="white", font_size=15, font_family="Arial",
+                                font_color="black", bordercolor="#BDBDBD", align="left"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
         if 'submission_date' in df.columns:
-            st.subheader("Resume Submission Timeline")
+            st.subheader("When Resumes Were Received")
             try:
                 df['submission_date'] = pd.to_datetime(df['submission_date'])
                 timeline = df.groupby(df['submission_date'].dt.date).size().reset_index()
                 timeline.columns = ['Date', 'Count']
-                fig = px.line(timeline, x='Date', y='Count', markers=True, labels={'Count': 'Resumes Received'})
+                fig = px.line(timeline, x='Date', y='Count', markers=True,
+                              labels={'Count': 'Resumes Received'})
                 fig.update_traces(line_color='#64B5F6', marker=dict(size=8, color='#42A5F5'))
-                fig.update_layout(hovermode='x unified',
-                                  hoverlabel=dict(bgcolor="white", font_size=14, font_family="Arial"))
+                fig.update_layout(hovermode='x unified')
                 st.plotly_chart(fig, use_container_width=True)
             except Exception:
                 pass
+
     else:
-        st.info("📤 Please upload and process resumes to view analytics")
+        st.info("📤 Please upload and process resumes first to see analytics.")

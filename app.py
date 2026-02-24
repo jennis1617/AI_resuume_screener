@@ -9,7 +9,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 from PIL import Image
 
-# Load .env silently (local development)
 try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
@@ -18,17 +17,20 @@ except ImportError:
 
 from config.settings import PAGE_CONFIG, CUSTOM_CSS
 from utils.groq_client import init_groq_client
-from ui.tabs import render_upload_tab, render_database_tab, render_matching_tab, render_analytics_tab
+from ui.tabs import render_upload_tab, render_analytics_tab
+from ui.analysis_tab import render_analysis_tab
+from ui.candidate_pool_tab import render_candidate_pool_tab
 
-# ── Page Configuration ─────────────────────────────────────────────────────────
 st.set_page_config(**PAGE_CONFIG)
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# ── Session State Initialisation ───────────────────────────────────────────────
+# ── Session State ──────────────────────────────────────────────────────────────
 _defaults = {
     'parsed_resumes': [],
     'candidates_df': None,
     'matched_results': None,
+    'review_results': None,
+    'selected_for_pool': set(),
     'resume_texts': {},
     'resume_metadata': {},
     'sharepoint_config': {
@@ -37,8 +39,8 @@ _defaults = {
         'client_secret': os.getenv('CLIENT_SECRET', ''),
         'site_id': os.getenv('SHAREPOINT_SITE_ID', ''),
         'drive_id': os.getenv('SHAREPOINT_DRIVE_ID', ''),
-        'input_folder_path': os.getenv('INPUT_FOLDER_PATH'),
-        'output_folder_path': os.getenv('OUTPUT_FOLDER_PATH'),
+        'input_folder_path': os.getenv('INPUT_FOLDER_PATH', 'Demair/Sample resumes'),
+        'output_folder_path': os.getenv('OUTPUT_FOLDER_PATH', 'Demair/Resumes_database'),
         'connected': False,
     },
 }
@@ -46,51 +48,38 @@ for key, val in _defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
-# ── Load credentials silently from .env (no UI shown) ─────────────────────────
+
 def _init_clients():
-    """Initialise Groq clients from environment variables. No UI output."""
     client = None
     fallback_client = None
-
     primary_key = os.getenv('GROQ_API_KEY', '')
     fallback_key = os.getenv('GROQ_FALLBACK_API_KEY', '')
-
     if primary_key:
         try:
             client = init_groq_client(primary_key)
         except Exception:
             pass
-
     if fallback_key:
         try:
             fallback_client = init_groq_client(fallback_key)
         except Exception:
             pass
-
     return client, fallback_client
 
 
 def _init_sharepoint():
-    """
-    Attempt silent SharePoint authentication from .env values.
-    Only runs once per session (when connected is still False).
-    """
     sp = st.session_state.sharepoint_config
     if sp.get('connected'):
-        return  # already authenticated
-
+        return
     required = [sp.get('tenant_id'), sp.get('client_id'),
                 sp.get('client_secret'), sp.get('site_id'), sp.get('drive_id')]
     if not all(required):
-        return  # credentials not available — user will see "not connected" in Upload tab
-
+        return
     try:
         import msal
         authority = f"https://login.microsoftonline.com/{sp['tenant_id']}"
         msal_app = msal.ConfidentialClientApplication(
-            sp['client_id'],
-            authority=authority,
-            client_credential=sp['client_secret'],
+            sp['client_id'], authority=authority, client_credential=sp['client_secret'],
         )
         token_res = msal_app.acquire_token_for_client(
             scopes=["https://graph.microsoft.com/.default"]
@@ -99,16 +88,13 @@ def _init_sharepoint():
             sp['connected'] = True
             st.session_state.sharepoint_config = sp
     except Exception:
-        pass  # Silent — connection failure surfaced only when user tries to use SharePoint
+        pass
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
 def main():
-    # Initialise clients and SharePoint silently
     client, fallback_client = _init_clients()
     _init_sharepoint()
 
-    # Store in session state for tabs to use
     st.session_state['client'] = client
     st.session_state['fallback_client'] = fallback_client
 
@@ -134,27 +120,26 @@ def main():
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Sidebar — user-facing settings only ───────────────────────────────────
+    # ── Sidebar ─────────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.title("⚙️ Configuration")
+        st.title("⚙️ Settings")
 
-        # ── Privacy ────────────────────────────────────────────────────────────
-        st.subheader("🛡️ Privacy Settings")
+        st.subheader("🛡️ Privacy")
         mask_pii_enabled = st.checkbox(
-            "Enable PII Masking",
+            "Hide personal details when sending to AI(**PII Masking**)",
             value=True,
-            help="Redact emails and phone numbers before sending to AI for processing",
+            help="Redacts email addresses and phone numbers before any AI processing"
         )
 
         st.divider()
 
-        # ── Date Filter ────────────────────────────────────────────────────────
-        st.subheader("📅 Resume Submission Date Range")
-        use_date_filter = st.checkbox("Enable date range filter", value=False)
+        st.subheader("📅 Filter by Date Received")
+        use_date_filter = st.checkbox("Turn on date filter", value=False)
 
         start_date = end_date = None
         if use_date_filter:
-            if st.session_state.candidates_df is not None and 'submission_date' in st.session_state.candidates_df.columns:
+            if (st.session_state.candidates_df is not None and
+                    'submission_date' in st.session_state.candidates_df.columns):
                 try:
                     df_dates = pd.to_datetime(st.session_state.candidates_df['submission_date'])
                     min_date = df_dates.min().date()
@@ -174,45 +159,35 @@ def main():
                 format="YYYY-MM-DD",
             )
             start_date, end_date = date_range
-            st.info(f"📅 Filtering: {start_date} to {end_date}")
+            st.info(f"📅 Showing: {start_date} to {end_date}")
 
-        st.divider()
-
-        # ── Top N ──────────────────────────────────────────────────────────────
-        st.subheader("🎚️ Top Candidates to Review")
-        top_n = st.select_slider(
-            "Select number",
-            options=[1, 2, 3, 5, 10, 15, 20],
-            value=5,
-        )
-        if top_n <= 3:
-            st.warning("⚡ Urgent hiring mode")
-        elif top_n <= 5:
-            st.info("📅 Standard recruitment")
-        else:
-            st.success("🕐 Comprehensive review")
-
-    # ── Store user settings in session state ───────────────────────────────────
     st.session_state['mask_pii_enabled'] = mask_pii_enabled
     st.session_state['use_date_filter'] = use_date_filter
     st.session_state['start_date'] = start_date
     st.session_state['end_date'] = end_date
-    st.session_state['top_n'] = top_n
 
-    # ── Tabs ───────────────────────────────────────────────────────────────────
+    # ── 4 Tabs (pre-screening removed) ────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs([
         "📤 Upload/Retrieve Resumes",
-        "📊 Candidate Pool",
-        "🎯 Candidate Matching",
-        "📈 Analytics Dashboard",
+        "🎯 Candidate Review & Scoring",
+        "👥 Candidate Pool",
+        "📈 Analytics",
     ])
 
     with tab1:
         render_upload_tab()
+
     with tab2:
-        render_database_tab()
+        parsed_resumes = st.session_state.get('parsed_resumes', [])
+        client_obj = st.session_state.get('client')
+        if parsed_resumes and client_obj:
+            render_analysis_tab(parsed_resumes, client_obj)
+        else:
+            st.info("📤 Please upload and process resumes in the **Upload Resumes** tab first.")
+
     with tab3:
-        render_matching_tab()
+        render_candidate_pool_tab()
+
     with tab4:
         render_analytics_tab()
 

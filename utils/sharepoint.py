@@ -89,12 +89,34 @@ class SharePointUploader:
             f"https://graph.microsoft.com/v1.0/sites/{site_id}"
             f"/drives/{drive_id}/root:/{clean_path}:/children"
         )
-        response = requests.get(url, headers=self._headers())
-        if response.status_code != 200:
-            raise Exception(f"List failed [{response.status_code}]: {response.text}")
-        items = response.json().get("value", [])
-        # Return only files (not folders)
-        return [i for i in items if "file" in i]
+
+        # FIX 1: Collect ALL pages — Graph API paginates at 100 items by default.
+        # Without this, only the first 100 files are fetched, and repeated calls
+        # to the same page can cause apparent duplicates.
+        all_items = []
+        while url:
+            response = requests.get(url, headers=self._headers())
+            if response.status_code != 200:
+                raise Exception(f"List failed [{response.status_code}]: {response.text}")
+            data = response.json()
+            all_items.extend(data.get("value", []))
+            url = data.get("@odata.nextLink")  # None when there are no more pages
+
+        # Keep only files (not folders)
+        files = [i for i in all_items if "file" in i]
+
+        # FIX 2: Deduplicate by filename — keeps the first occurrence only.
+        # Pagination overlap or the same file appearing via multiple paths
+        # can cause the same resume to appear more than once.
+        seen = set()
+        unique_files = []
+        for f in files:
+            fname = f.get("name", "").strip().lower()
+            if fname and fname not in seen:
+                seen.add(fname)
+                unique_files.append(f)
+
+        return unique_files
 
     def download_file(self, download_url: str) -> bytes:
         """Download using the @microsoft.graph.downloadUrl provided in list results."""
@@ -126,7 +148,7 @@ def connect_to_sharepoint(tenant_id: str, client_id: str, client_secret: str) ->
         drive_id = st.session_state.sharepoint_config.get("drive_id", "")
         if site_id and drive_id:
             uploader.list_files(site_id, drive_id, "/")
-        return uploader  # Return the object; callers store it
+        return uploader
     except Exception as e:
         st.error(f"SharePoint connection error: {str(e)}")
         return None
