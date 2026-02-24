@@ -121,7 +121,9 @@ def render_upload_tab():
             )
         with col2:
             st.metric("📁 Files Selected", len(uploaded_files) if uploaded_files else 0)
-            st.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
+            #st.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
+            resumes_ready_placeholder = st.empty()
+            resumes_ready_placeholder.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
 
         if uploaded_files and client:
             if st.button("🚀 Read All Resumes", type="primary"):
@@ -154,6 +156,7 @@ def render_upload_tab():
 
                 if st.session_state.parsed_resumes:
                     st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
+                    resumes_ready_placeholder.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
                     st.success(
                         f"✅ {len(st.session_state.parsed_resumes)} resumes are ready! "
                         "Go to the **Candidate Review & Scoring** tab to continue."
