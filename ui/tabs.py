@@ -41,7 +41,7 @@ def render_upload_tab():
 
     upload_method = st.radio(
         "Where are the resumes coming from?",
-        ["📁 Upload Manually", "☁️ Retrieve from SharePoint"],
+        ["📁 Upload from my computer", "☁️ Retrieve from SharePoint"],
         horizontal=True,
     )
 
@@ -73,6 +73,8 @@ def render_upload_tab():
                     st.session_state.resume_texts = {}
                     st.session_state.resume_metadata = {}
 
+                    seen_candidate_names = set()  # deduplicate by extracted name
+
                     for idx, file_data in enumerate(downloaded_files):
                         status.text(f"Reading: {file_data['name']}")
                         text = extract_text_from_file(file_data)
@@ -89,6 +91,13 @@ def render_upload_tab():
                                 client, text, file_data['name'], mask_pii_enabled, upload_date
                             )
                             if parsed:
+                                # Skip if we already have a resume for this candidate name
+                                candidate_name = parsed.get('name', '').strip().lower()
+                                if candidate_name and candidate_name in seen_candidate_names:
+                                    progress.progress((idx + 1) / len(downloaded_files))
+                                    continue
+                                if candidate_name:
+                                    seen_candidate_names.add(candidate_name)
                                 st.session_state.parsed_resumes.append(parsed)
                                 st.session_state.resume_texts[parsed.get('name', '')] = text
                                 st.session_state.resume_metadata[parsed.get('name', '')] = {
@@ -103,7 +112,7 @@ def render_upload_tab():
                     if st.session_state.parsed_resumes:
                         st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
                         st.success(
-                            f"✅ {len(st.session_state.parsed_resumes)} resumes ready! "
+                            f"📥 Received {len(st.session_state.parsed_resumes)} resumes — "
                             "Go to **Candidate Review & Scoring** to continue."
                         )
                 elif not downloaded_files:
@@ -121,9 +130,11 @@ def render_upload_tab():
             )
         with col2:
             st.metric("📁 Files Selected", len(uploaded_files) if uploaded_files else 0)
-            #st.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
+            # Use a placeholder so the metric updates immediately after parsing
             resumes_ready_placeholder = st.empty()
-            resumes_ready_placeholder.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
+            resumes_ready_placeholder.metric(
+                "✅ Resumes Received", len(st.session_state.parsed_resumes)
+            )
 
         if uploaded_files and client:
             if st.button("🚀 Read All Resumes", type="primary"):
@@ -156,9 +167,12 @@ def render_upload_tab():
 
                 if st.session_state.parsed_resumes:
                     st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
-                    resumes_ready_placeholder.metric("✅ Resumes Ready", len(st.session_state.parsed_resumes))
+                    # Refresh the metric immediately with the new count
+                    resumes_ready_placeholder.metric(
+                        "✅ Resumes Received", len(st.session_state.parsed_resumes)
+                    )
                     st.success(
-                        f"✅ {len(st.session_state.parsed_resumes)} resumes are ready! "
+                        f"📥 Received {len(st.session_state.parsed_resumes)} resumes — "
                         "Go to the **Candidate Review & Scoring** tab to continue."
                     )
 

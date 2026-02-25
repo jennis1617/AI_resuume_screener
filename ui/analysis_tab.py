@@ -38,8 +38,8 @@ def render_analysis_tab(parsed_resumes, client):
             <li>Paste or upload the <strong>Job Description</strong> below</li>
             <li>Click <strong>Run AI Screening</strong> — AI scores every resume against the job</li>
             <li>Results appear ranked by score, <strong>highest first</strong></li>
-            <li>✅ Tick a candidate to add them to the <strong>Candidate Pool</strong></li>
-            <li>📄 Download a <strong>Word doc</strong> or 📊 <strong>PPT</strong> directly from each card</li>
+            <li>☑️ Select candidates at your discretion for <strong>interview consideration</strong></li>
+            <li>📋 AI generates a <strong>NexTurn-compatible</strong> structured profile document per candidate</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
@@ -81,12 +81,12 @@ def render_analysis_tab(parsed_resumes, client):
     st.divider()
 
     # ── Launch button ─────────────────────────────────────────────────────────
-    st.subheader("🤖 Step 2 — Run AI Screening")
+    st.subheader("Step 2 — Run AI Screening")
 
     col_btn, col_info = st.columns([1, 2])
     with col_btn:
         run_review = st.button(
-            "🧠 Run AI Screening",
+            "Run AI Screening",
             type="primary",
             use_container_width=True
         )
@@ -124,7 +124,7 @@ def _run_full_analysis(parsed_resumes, client, job_desc):
     for idx, res_data in enumerate(res_list):
         name = res_data.get('name', f"Candidate {idx + 1}")
         status_box.markdown(
-            f"<p style='color:#555;'>🧠 AI screening "
+            f"<p style='color:#555;'> AI screening "
             f"<strong>{name}</strong> ({idx + 1}/{len(res_list)})…</p>",
             unsafe_allow_html=True
         )
@@ -309,11 +309,11 @@ def _render_score_breakdown(final_score, breakdown, reason):
         weight_label = weights.get(dim, "")
         pct = max(0, min(100, score))
         if pct >= 70:
-            bar_colour = "#94E497"
+            bar_colour = "#4CAF50"
         elif pct >= 45:
-            bar_colour = "#E39F3A"
+            bar_colour = "#FF9800"
         else:
-            bar_colour = "#CCCC78EC"
+            bar_colour = "#F44336"
 
         st.markdown(
             f"""<div style="background:#F9FAFB; padding:0 22px 14px 22px;">
@@ -355,7 +355,7 @@ def _render_score_breakdown(final_score, breakdown, reason):
         """<div style="background:#F9FAFB; padding:4px 22px 18px 22px;
                 border-radius:0 0 12px 12px; border:1px solid #E5E7EB;
                 border-top:none;">
-            <p style="font-size:0.78rem; color:#9CA3AF; margin:0;">
+            <p style="font-size:1rem; font-weight:600; color:#374151; margin:0;">
                 Final score = Skills&times;40% + Experience&times;30%
                 + Projects&times;20% + Domain&times;10%
             </p>
@@ -380,36 +380,68 @@ def _render_quality_section(analysis):
             <span style="color:#166534;"> {msg}</span>
         </div>""", unsafe_allow_html=True)
 
-    def yellow_box(label, msg):
-        st.markdown(f"""
-        <div style="background:#FFFDE7; border:1px solid #FDD835; border-radius:8px;
-                    padding:10px 14px; margin-bottom:8px;">
-            <span style="color:#856404; font-weight:600;">⚠️ {label}:</span>
-            <span style="color:#5D4037;"> {msg}</span>
-        </div>""", unsafe_allow_html=True)
+    def yellow_bullets(label, items):
+        """Always render as bullet list — one point per line, no run-on sentences."""
+        import re
+        # Each item from the list may itself be a long sentence — split further
+        # on ". Capital" or ", Capital" patterns to get atomic points
+        atomic = []
+        for raw in items:
+            parts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', str(raw).strip())
+            for p in parts:
+                p = p.strip().rstrip('. ')
+                if p:
+                    atomic.append(p)
+
+        if not atomic:
+            return
+
+        if len(atomic) == 1:
+            # Single short point — show inline
+            st.markdown(
+                f'''<div style="background:#FFFDE7; border:1px solid #FDD835;
+                        border-radius:8px; padding:10px 14px; margin-bottom:8px;">
+                    <span style="color:#856404; font-weight:600;">⚠️ {label}:</span>
+                    <span style="color:#5D4037;"> {atomic[0]}</span>
+                </div>''', unsafe_allow_html=True
+            )
+        else:
+            li_html = "".join(
+                f'<li style="margin-bottom:5px; line-height:1.5;">{p}</li>'
+                for p in atomic
+            )
+            st.markdown(
+                f'''<div style="background:#FFFDE7; border:1px solid #FDD835;
+                        border-radius:8px; padding:10px 14px; margin-bottom:8px;">
+                    <span style="color:#856404; font-weight:600;">⚠️ {label}:</span>
+                    <ul style="color:#5D4037; margin:7px 0 0 0; padding-left:20px;">
+                        {li_html}
+                    </ul>
+                </div>''', unsafe_allow_html=True
+            )
 
     gaps = analysis.get('career_gaps', [])
     if gaps:
-        yellow_box("Gaps in work history", ', '.join(gaps))
+        yellow_bullets("Gaps in work history", gaps)
     else:
         green_box("Work history", "No major gaps found")
 
     tech_issues = analysis.get('technical_anomalies', [])
     if tech_issues:
-        yellow_box("Things to double-check", ', '.join(tech_issues))
+        yellow_bullets("Things to double-check", tech_issues)
     else:
         green_box("Experience details", "Everything looks consistent")
 
     concerns = analysis.get('fake_indicators', [])
     if concerns:
-        yellow_box("Points that need a closer look", ', '.join(concerns))
+        yellow_bullets("Points that need a closer look", concerns)
 
     # Areas of knowledge — removed per mentor request
 
 
 def _render_doc_buttons(client, name, meta, idx):
     """Word doc + PPT buttons inline in the candidate card."""
-    st.markdown("#### 📁 Generate Documents")
+    st.markdown("#### 📄 Structure Resume in NexTurn Format")
 
     doc_key   = f"docx_bytes_{name}"
     ppt_key   = f"pptx_bytes_{name}"
