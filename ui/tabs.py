@@ -41,7 +41,7 @@ def render_upload_tab():
 
     upload_method = st.radio(
         "Where are the resumes coming from?",
-        ["📁 Upload from my computer", "☁️ Retrieve from SharePoint"],
+        ["📁 Upload Manually", "☁️ Retrieve from SharePoint"],
         horizontal=True,
     )
 
