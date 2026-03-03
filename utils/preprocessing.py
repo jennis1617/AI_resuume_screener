@@ -1,13 +1,11 @@
 """
 Resume preprocessing and parsing utilities
 """
-
 import streamlit as st
 import re
 import json
 from datetime import datetime
 from utils.groq_client import create_groq_completion
-
 
 def mask_pii(text):
     """Redacts PII before sending to LLM."""
@@ -15,19 +13,16 @@ def mask_pii(text):
     text = re.sub(r'\+?\d[\d -]{8,12}\d', '[PHONE_MASKED]', text)
     return text
 
-
 def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False, upload_date=None):
-    """Parse resume with optional PII masking. Uses fallback Groq key when available."""
+    """Parse resume with synchronized keys for the Word template."""
     fallback_client = st.session_state.get('fallback_client')
 
-    # Extract email and phone BEFORE masking
+    # Contact Extraction
     email_extracted = None
     phone_extracted = None
-
     email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
     email_matches = re.findall(email_pattern, resume_text)
-    if email_matches:
-        email_extracted = email_matches[0]
+    if email_matches: email_extracted = email_matches[0]
 
     phone_pattern = r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'
     phone_matches = re.findall(phone_pattern, resume_text)
@@ -36,38 +31,49 @@ def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False
 
     processed_text = mask_pii(resume_text) if mask_pii_enabled else resume_text
 
+    # UPDATED TEMPLATE: Synchronized with .docx tags
     json_template = """
     {
-        "name": "full name",
-        "email": "email@example.com or null if not found",
-        "phone": "phone number or null if not found",
-        "experience_years": "numeric value (e.g., 5.5)",
-        "tech_stack": "comma-separated skills (Python, AWS, Docker, etc)",
-        "current_role": "most recent job title",
-        "education": "highest degree",
-        "key_projects": "brief summary of top achievements",
-        "certifications": "certifications or null",
-        "domain_expertise": "industry domain"
+        "NAME": "Full name",
+        "ROLE": "Job title",
+        "PROFESSIONAL_SUMMARY": "2-3 sentence summary",
+        "PROFESSIONAL_SUMMARY": "2-3 sentence summary",  # Exact match for template
+        "HIGHEST_EDUCATION": "Full degree name",
+        "COLLEGE_NAME": "University name",
+        "EDUCATION_DATES": "Graduation month/year",
+        "tech_stack": ["Skill1", "Skill2", "Skill3"]
+        "HIGHEST_EDUCATION": "Full degree name (e.g. Master of Science in Data Science)",
+        "COLLEGE_NAME": "University name",
+        "EDUCATION_DATES": "Graduation range (e.g. 2020 - 2022)",
+        "experience_years": "Numeric years",
+        "tech_stack": ["Skill1", "Skill2", "Skill3", "Skill4", "Skill5", "Skill6", "Skill7", "Skill8"],
+        "COMPANY_NAME": "Most recent company",
+        "LOCATION": "City, State",
+        "START_DATE": "MM/YYYY",
+        "END_DATE": "MM/YYYY or Present",
+        "PROJECT1_NAME": "Primary project title",
+        "project1_bullets": ["Bullet 1", "Bullet 2", "Bullet 3", "Bullet 4", "Bullet 5", "Bullet 6"],
+        "TECHNOLOGIES_USED": "List of tools used in project",
+        "BACKEND_LANGUAGES": "e.g. Python, Java",
+        "CONTAINERS_AND_ORCHESTRATION": "e.g. Docker, Kubernetes",
+        "DATABASES": "e.g. PostgreSQL, MongoDB",
+        "OPERATING_SYSTEMS": "e.g. Linux, Windows",
+        "VERSION_CONTROL_TOOLS": "e.g. Git, GitHub",
+        "TESTING_TOOLS": "e.g. PyTest, Selenium"
     }"""
 
     prompt = (
-        "You are an expert AI resume parser. Extract structured data from this resume.\n\n"
-        "IMPORTANT: Look carefully for email addresses and phone numbers in the resume text.\n"
-        "Email format: name@domain.com\n"
-        "Phone format: (XXX) XXX-XXXX or XXX-XXX-XXXX or similar variations\n\n"
-        "Return valid JSON with this exact structure:\n"
-        + json_template +
-        "\n\nResume:\n"
-        + processed_text[:6000] +
-        "\n\nReturn ONLY JSON, no markdown or extra text."
+        "You are an expert AI resume parser. Extract structured data.\n"
+        "Return valid JSON with this exact structure:\n" + json_template +
+        "\n\nResume:\n" + processed_text[:6000] +
+        "\n\nReturn ONLY JSON."
     )
 
     try:
         chat_completion = create_groq_completion(
-            client,
-            fallback_client,
+            client, fallback_client,
             messages=[
-                {"role": "system", "content": "You are a precise resume parser. Extract ALL contact information including email and phone. Return only valid JSON."},
+                {"role": "system", "content": "You are a precise resume parser. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.3-70b-versatile",
@@ -81,23 +87,15 @@ def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False
 
         if json_start != -1 and json_end > json_start:
             parsed_data = json.loads(response[json_start:json_end])
-
+            
+            # Re-insert PII if masked
             if mask_pii_enabled:
-                if email_extracted:
-                    parsed_data['email'] = email_extracted
-                if phone_extracted:
-                    parsed_data['phone'] = phone_extracted
-            else:
-                if not parsed_data.get('email') or parsed_data.get('email') == 'null':
-                    parsed_data['email'] = email_extracted if email_extracted else None
-                if not parsed_data.get('phone') or parsed_data.get('phone') == 'null':
-                    parsed_data['phone'] = phone_extracted if phone_extracted else None
-
+                if email_extracted: parsed_data['email'] = email_extracted
+                if phone_extracted: parsed_data['phone'] = phone_extracted
+            
             parsed_data['filename'] = filename
             parsed_data['submission_date'] = upload_date if upload_date else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             return parsed_data
-        return None
-
     except Exception as e:
         st.error(f"Error parsing {filename}: {str(e)}")
         return None

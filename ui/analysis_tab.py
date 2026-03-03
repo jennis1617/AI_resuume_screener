@@ -15,11 +15,8 @@ import streamlit as st
 import pandas as pd
 from utils.resume_analysis import ResumeAnalyzer
 from utils.file_handlers import extract_text_from_file
-from utils.resume_formatter import (
-    extract_detailed_resume_data,
-    check_template_completeness,
-    generate_resume_docx,
-)
+from utils.doc_generator import generate_resume_docx
+from utils.template_mapper import map_to_template_format
 from utils.ppt_generator import generate_candidate_ppt
 
 
@@ -450,40 +447,37 @@ def _render_doc_buttons(client, name, meta, idx):
 
     col_word, col_ppt = st.columns(2)
 
+    # ✅ WORD BUTTON
     with col_word:
         if st.button("📝 Create Word Document", key=f"word_{idx}", use_container_width=True):
             if not client:
                 st.error("AI client not available.")
             else:
                 with st.spinner(f"Building Word doc for {name}…"):
-                    resume_text  = st.session_state.get('resume_texts', {}).get(name, str(meta))
-                    detailed     = extract_detailed_resume_data(client, resume_text, meta)
-                    completeness = check_template_completeness(detailed)
-                    st.session_state[check_key] = completeness
-                    st.session_state[det_key]   = detailed
-                    st.session_state[doc_key]   = (
-                        generate_resume_docx(detailed)
-                        if not completeness['has_critical_gaps'] else None
+                    detailed = meta
+                    st.session_state[det_key] = detailed
+
+                    safe_name = name.replace(" ", "_").replace("/", "_")
+                    output_path = f"generated_{safe_name}.docx"
+
+                    generate_resume_docx(
+                        "templates/sample_word_template.docx",
+                        output_path,
+                        detailed
                     )
 
-        if check_key in st.session_state:
-            comp = st.session_state[check_key]
-            if comp['has_critical_gaps']:
-                st.warning("⚠️ Resume is missing key details — document may be incomplete.")
-            elif comp['warnings']:
-                for w in comp['warnings'][:2]:
-                    st.caption(f"ℹ️ {w}")
+                    with open(output_path, "rb") as f:
+                        st.session_state[doc_key] = f.read()
 
-        if doc_key in st.session_state and st.session_state[doc_key]:
-            safe = name.replace(' ', '_').replace('/', '_')
-            st.download_button(
-                "⬇️ Download Word Doc",
-                data=st.session_state[doc_key],
-                file_name=f"{safe}_resume.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
-                key=f"dl_word_{idx}"
-            )
+    # ✅ DOWNLOAD BUTTON (Important!)
+    if doc_key in st.session_state:
+        st.download_button(
+            "⬇ Download Word Document",
+            data=st.session_state[doc_key],
+            file_name=f"{name}_NexTurn_Resume.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
 
     with col_ppt:
         if st.button("📊 Create PPT Profile", key=f"ppt_{idx}", use_container_width=True):
