@@ -227,17 +227,31 @@ def save_csv_to_sharepoint(config: dict, df, filename: str) -> bool:
 JD_FOLDER = "Demair/Job_Descriptions"   # dedicated folder for JDs in SharePoint
 
 
-def upload_jd_to_sharepoint(config: dict, jd_text: str, filename: str) -> bool:
-    """Save a job description as a .txt file to SharePoint JD folder."""
+def upload_jd_to_sharepoint(config: dict, jd_text: str, filename: str,
+                            uploaded_by: str = "") -> bool:
+    """
+    Save a job description as a .txt file to SharePoint JD folder.
+    If uploaded_by is provided the filename is prefixed with it so
+    list_jds_from_sharepoint can filter by owner across sessions.
+    e.g. hr_lead__JD_20260305_1430.txt
+    """
     try:
         uploader = _make_uploader(config)
-        content = jd_text.encode("utf-8")
-        folder = config.get("jd_folder_path", JD_FOLDER)
+        content  = jd_text.encode("utf-8")
+        folder   = config.get("jd_folder_path", JD_FOLDER)
+
+        # Tag filename with uploader so we can filter later without needing
+        # SharePoint column metadata (works with app-only auth)
+        if uploaded_by and not filename.startswith(f"{uploaded_by}__"):
+            tagged_name = f"{uploaded_by}__{filename}"
+        else:
+            tagged_name = filename
+
         uploader.upload_file(
             site_id=config["site_id"],
             drive_id=config["drive_id"],
             folder_path=folder,
-            file_name=filename,
+            file_name=tagged_name,
             content=content,
             content_type="text/plain",
         )
@@ -269,11 +283,19 @@ def list_jds_from_sharepoint(config: dict) -> list:
                               .get("user", {})
                               .get("displayName", "Unknown"))
             created_at = item.get("createdDateTime", "")
+            # Recover the uploader tag from filename prefix (e.g. "hr_lead__JD...")
+            if "__" in name:
+                uploader_tag, display_name = name.split("__", 1)
+            else:
+                uploader_tag, display_name = "", name
+
             jds.append({
-                "name":       name,
-                "item_id":    item.get("id", ""),
-                "created_by": created_by,
-                "created_at": created_at,
+                "name":         name,           # full filename (used for filtering)
+                "display_name": display_name,   # clean name shown in UI
+                "uploader_tag": uploader_tag,   # e.g. "hr_lead"
+                "item_id":      item.get("id", ""),
+                "created_by":   created_by,
+                "created_at":   created_at,
                 "download_url": item.get("@microsoft.graph.downloadUrl", ""),
             })
         return jds

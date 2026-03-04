@@ -96,8 +96,11 @@ def render_analysis_tab(parsed_resumes, client):
                 key="jd_save_name"
             )
             if st.button("💾 Save JD to SharePoint", key="save_jd_btn"):
-                sp = st.session_state.sharepoint_config
-                if upload_jd_to_sharepoint(sp, job_desc, jd_name):
+                sp         = st.session_state.sharepoint_config
+                user_email = st.session_state.get('user_email', '')
+                # Convert email to safe tag: hr.lead@nexturn.com → hr_lead
+                safe_user  = user_email.split('@')[0].replace('.', '_') if user_email else ''
+                if upload_jd_to_sharepoint(sp, job_desc, jd_name, uploaded_by=safe_user):
                     st.success(f"✅ JD saved to SharePoint as **{jd_name}**")
 
     if not job_desc or not job_desc.strip():
@@ -152,36 +155,39 @@ def _render_sharepoint_jd_panel():
         st.info("No job descriptions found in SharePoint yet. Save one using the option below.")
         return
 
-    # Split into mine vs others
-    my_jds    = [j for j in all_jds if j['created_by'].lower() == current_user.lower()] if current_user else []
-    other_jds = [j for j in all_jds if j not in my_jds]
+    # Split into mine vs others using uploader_tag prefix in filename
+    user_email = st.session_state.get('user_email', '')
+    safe_user  = user_email.split('@')[0].replace('.', '_') if user_email else ''
+    my_jds     = [j for j in all_jds if j.get('uploader_tag') == safe_user] if safe_user else []
+    other_jds  = [j for j in all_jds if j not in my_jds]
 
     # ── My JDs dropdown ───────────────────────────────────────────────────────
     st.markdown("**📂 My JDs** *(uploaded by you)*")
     if my_jds:
-        my_names = [j['name'] for j in my_jds]
+        # Show clean display_name but keep full name for lookup
+        my_display = [j.get('display_name', j['name']) for j in my_jds]
         sel_my = st.selectbox("Select one of your JDs to load",
-                              ["— select —"] + my_names, key="sp_my_jd_select")
+                              ["— select —"] + my_display, key="sp_my_jd_select")
         if sel_my != "— select —":
-            jd_obj = next(j for j in my_jds if j['name'] == sel_my)
+            jd_obj = next(j for j in my_jds if j.get('display_name', j['name']) == sel_my)
             if st.button("📥 Load this JD", key="load_my_jd"):
                 text = download_jd_from_sharepoint(jd_obj['download_url'])
                 if text:
                     st.session_state['active_jd_text'] = text
                     st.success(f"✅ Loaded: {sel_my}")
     else:
-        st.caption("You haven't uploaded any JDs yet.")
+        st.caption("You haven't saved any JDs yet. Upload a JD and save it using the option above.")
 
     st.divider()
 
     # ── All available JDs dropdown ────────────────────────────────────────────
     st.markdown("**☁️ All Available JDs** *(from SharePoint)*")
     if other_jds:
-        other_names = [j['name'] for j in other_jds]
+        other_display = [j.get('display_name', j['name']) for j in other_jds]
         sel_other = st.selectbox("Select a JD to load",
-                                 ["— select —"] + other_names, key="sp_other_jd_select")
+                                 ["— select —"] + other_display, key="sp_other_jd_select")
         if sel_other != "— select —":
-            jd_obj = next(j for j in other_jds if j['name'] == sel_other)
+            jd_obj = next(j for j in other_jds if j.get('display_name', j['name']) == sel_other)
             col_load, col_del = st.columns([1, 1])
             with col_load:
                 if st.button("📥 Load this JD", key="load_other_jd"):
@@ -595,7 +601,7 @@ def _render_quality_section(analysis):
 
 def _render_doc_buttons(client, name, meta, idx):
     """NexTurn Profile Export — single-click download (pre-generated on load)."""
-    st.markdown("#### 📋 Export to NexTurn Format")
+    st.markdown("#### 📋 NexTurn Profile Export")
 
     safe    = name.replace(' ', '_').replace('/', '_')
     doc_key = f"docx_bytes_{name}"
