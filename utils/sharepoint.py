@@ -220,3 +220,141 @@ def save_csv_to_sharepoint(config: dict, df, filename: str) -> bool:
     except Exception as e:
         st.error(f"Error saving CSV to SharePoint: {str(e)}")
         return False
+
+
+# ── JD (Job Description) SharePoint helpers ───────────────────────────────────
+
+JD_FOLDER = "Demair/Job_Descriptions"   # dedicated folder for JDs in SharePoint
+
+
+def upload_jd_to_sharepoint(config: dict, jd_text: str, filename: str) -> bool:
+    """Save a job description as a .txt file to SharePoint JD folder."""
+    try:
+        uploader = _make_uploader(config)
+        content = jd_text.encode("utf-8")
+        folder = config.get("jd_folder_path", JD_FOLDER)
+        uploader.upload_file(
+            site_id=config["site_id"],
+            drive_id=config["drive_id"],
+            folder_path=folder,
+            file_name=filename,
+            content=content,
+            content_type="text/plain",
+        )
+        return True
+    except Exception as e:
+        st.error(f"Could not save JD to SharePoint: {e}")
+        return False
+
+
+def list_jds_from_sharepoint(config: dict) -> list:
+    """
+    List all JD files in SharePoint JD folder.
+    Returns list of dicts: {name, item_id, created_by, created_at}
+    """
+    try:
+        uploader = _make_uploader(config)
+        folder = config.get("jd_folder_path", JD_FOLDER)
+        items = uploader.list_files(
+            site_id=config["site_id"],
+            drive_id=config["drive_id"],
+            folder_path=folder,
+        )
+        jds = []
+        for item in items:
+            name = item.get("name", "")
+            if not name.endswith(".txt"):
+                continue
+            created_by = (item.get("createdBy", {})
+                              .get("user", {})
+                              .get("displayName", "Unknown"))
+            created_at = item.get("createdDateTime", "")
+            jds.append({
+                "name":       name,
+                "item_id":    item.get("id", ""),
+                "created_by": created_by,
+                "created_at": created_at,
+                "download_url": item.get("@microsoft.graph.downloadUrl", ""),
+            })
+        return jds
+    except Exception as e:
+        st.error(f"Could not list JDs from SharePoint: {e}")
+        return []
+
+
+def download_jd_from_sharepoint(download_url: str) -> str:
+    """Download a JD text file and return its contents as a string."""
+    try:
+        import requests
+        response = requests.get(download_url)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        st.error(f"Could not download JD: {e}")
+        return ""
+
+
+def delete_jd_from_sharepoint(config: dict, item_id: str) -> bool:
+    """Delete a JD file from SharePoint by its Graph API item ID."""
+    try:
+        import requests
+        uploader = _make_uploader(config)
+        url = (
+            f"https://graph.microsoft.com/v1.0/sites/{config['site_id']}"
+            f"/drives/{config['drive_id']}/items/{item_id}"
+        )
+        response = requests.delete(url, headers=uploader._headers())
+        if response.status_code == 204:
+            return True
+        raise Exception(f"Delete failed [{response.status_code}]: {response.text}")
+    except Exception as e:
+        st.error(f"Could not delete JD: {e}")
+        return False
+
+
+def list_resumes_by_uploader(config: dict, current_user: str) -> dict:
+    """
+    Split SharePoint resumes into:
+      - 'my_resumes':        uploaded by current_user
+      - 'other_resumes':     uploaded by everyone else
+    Returns dict with both lists.
+    current_user should match the displayName from Azure AD (e.g. "John Smith").
+    """
+    try:
+        uploader = _make_uploader(config)
+        items = uploader.list_files(
+            site_id=config["site_id"],
+            drive_id=config["drive_id"],
+            folder_path=config["input_folder_path"],
+        )
+
+        my_resumes    = []
+        other_resumes = []
+
+        for item in items:
+            name = item.get("name", "")
+            ext  = name.rsplit(".", 1)[-1].lower()
+            if ext not in ("pdf", "docx"):
+                continue
+
+            created_by = (item.get("createdBy", {})
+                              .get("user", {})
+                              .get("displayName", ""))
+            entry = {
+                "name":         name,
+                "item_id":      item.get("id", ""),
+                "created_by":   created_by,
+                "created_at":   item.get("createdDateTime", ""),
+                "download_url": item.get("@microsoft.graph.downloadUrl", ""),
+            }
+
+            if current_user and created_by.lower() == current_user.lower():
+                my_resumes.append(entry)
+            else:
+                other_resumes.append(entry)
+
+        return {"my_resumes": my_resumes, "other_resumes": other_resumes}
+
+    except Exception as e:
+        st.error(f"Could not list resumes: {e}")
+        return {"my_resumes": [], "other_resumes": []}

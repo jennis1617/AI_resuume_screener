@@ -20,9 +20,24 @@ from utils.groq_client import init_groq_client
 from ui.tabs import render_upload_tab, render_analytics_tab
 from ui.analysis_tab import render_analysis_tab
 from ui.candidate_pool_tab import render_candidate_pool_tab
+from login import render_login_page, render_user_badge
 
 st.set_page_config(**PAGE_CONFIG)
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown("""
+<style>
+div[data-testid="stExpander"] summary p,
+div[data-testid="stExpander"] summary span {
+    font-size: 1.18rem !important;
+    font-weight: 700 !important;
+    color: #111827 !important;
+}
+div[data-testid="column"] {
+    padding-left: 0rem !important;
+    padding-right: 0rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ── Session State ──────────────────────────────────────────────────────────────
 _defaults = {
@@ -33,6 +48,7 @@ _defaults = {
     'selected_for_pool': set(),
     'resume_texts': {},
     'resume_metadata': {},
+    'logged_in': False,
     'sharepoint_config': {
         'tenant_id': os.getenv('TENANT_ID', ''),
         'client_id': os.getenv('CLIENT_ID', ''),
@@ -92,6 +108,10 @@ def _init_sharepoint():
 
 
 def main():
+    # ── Login gate ─────────────────────────────────────────────────────────────
+    if not render_login_page():
+        return   # stop here — login page is shown, app body hidden
+
     client, fallback_client = _init_clients()
     _init_sharepoint()
 
@@ -122,44 +142,74 @@ def main():
 
     # ── Sidebar ─────────────────────────────────────────────────────────────────
     with st.sidebar:
+        render_user_badge()
         st.title("⚙️ Settings")
 
         st.subheader("🛡️ Privacy")
-        mask_pii_enabled = st.checkbox(
-            "Hide personal details when sending to AI(**PII Masking**)",
-            value=True,
-            help="Redacts email addresses and phone numbers before any AI processing"
+        st.markdown(
+            "<div style='background:#FEF3C7; border:1px solid #F59E0B; border-radius:8px; "
+            "padding:10px 12px; font-size:0.88rem; color:#92400E;'>"
+            "⚠️ <strong>PII Masking is always ON</strong><br>"
+            "<span style='font-size:0.82rem;'>Personal details (email, phone) are always "
+            "redacted before AI processing.</span>"
+            "</div>",
+            unsafe_allow_html=True
         )
+        mask_pii_enabled = True  # always enforced — not user-configurable
 
         st.divider()
 
-        st.subheader("📅 Filter by Date Received")
-        use_date_filter = st.checkbox("Turn on date filter", value=False)
+        sp_connected_flag   = st.session_state.get('sharepoint_config', {}).get('connected', False)
+        sp_selected_in_tab1 = st.session_state.get('upload_method_radio', '') == "☁️ Retrieve from SharePoint"
+        sp_active = sp_connected_flag and sp_selected_in_tab1
+
+        st.subheader("☁️ SharePoint Date Filter")
+        if sp_active:
+            st.markdown(
+                "<ul style='font-size:0.88rem; color:#555; margin:0 0 8px 0; padding-left:16px; line-height:1.9;'>"
+                "<li>Applies to SharePoint resumes only</li>"
+                "<li>Filters by upload date to SharePoint</li>"
+                "</ul>",
+                unsafe_allow_html=True
+            )
+            use_date_filter = st.checkbox(
+                "Turn on date filter",
+                value=False,
+                key="date_filter_checkbox"
+            )
+        else:
+            st.markdown(
+                "<div style='background:#F1F5F9; border-radius:8px; padding:10px 14px; "
+                "color:#94A3B8; font-size:0.88rem;'>"
+                "🔒 Available only when <strong>Retrieve from SharePoint</strong> "
+                "is selected in the Upload tab."
+                "</div>",
+                unsafe_allow_html=True
+            )
+            use_date_filter = False
 
         start_date = end_date = None
         if use_date_filter:
-            if (st.session_state.candidates_df is not None and
-                    'submission_date' in st.session_state.candidates_df.columns):
-                try:
-                    df_dates = pd.to_datetime(st.session_state.candidates_df['submission_date'])
-                    min_date = df_dates.min().date()
-                    max_date = df_dates.max().date()
-                except Exception:
-                    min_date = datetime.now().date() - timedelta(days=90)
-                    max_date = datetime.now().date()
-            else:
-                min_date = datetime.now().date() - timedelta(days=90)
-                max_date = datetime.now().date()
+            col_from, col_to = st.columns(2)
+            with col_from:
+                start_date = st.date_input(
+                    "From",
+                    value=datetime.now().date() - timedelta(days=90),
+                    key="date_from"
+                )
+            with col_to:
+                end_date = st.date_input(
+                    "To",
+                    value=datetime.now().date(),
+                    key="date_to"
+                )
+            if start_date and end_date:
+                if start_date > end_date:
+                    st.error("⚠️ 'From' date cannot be after 'To' date.")
+                    start_date = end_date = None
+                else:
+                    st.info(f"📅 Showing: {start_date} to {end_date}")
 
-            date_range = st.slider(
-                "Select date range",
-                min_value=min_date,
-                max_value=max_date,
-                value=(min_date, max_date),
-                format="YYYY-MM-DD",
-            )
-            start_date, end_date = date_range
-            st.info(f"📅 Showing: {start_date} to {end_date}")
 
     st.session_state['mask_pii_enabled'] = mask_pii_enabled
     st.session_state['use_date_filter'] = use_date_filter

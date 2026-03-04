@@ -11,6 +11,7 @@ Candidate Review & Scoring Tab — updated per mentor review:
 """
 
 import json
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 from utils.resume_analysis import ResumeAnalyzer
@@ -21,6 +22,15 @@ from utils.resume_formatter import (
     generate_resume_docx,
 )
 from utils.ppt_generator import generate_candidate_ppt
+from utils.template_mapper import map_to_template_format
+from utils.sharepoint import (
+    SHAREPOINT_AVAILABLE,
+    upload_jd_to_sharepoint,
+    list_jds_from_sharepoint,
+    download_jd_from_sharepoint,
+    delete_jd_from_sharepoint,
+    list_resumes_by_uploader,
+)
 
 
 def render_analysis_tab(parsed_resumes, client):
@@ -47,9 +57,15 @@ def render_analysis_tab(parsed_resumes, client):
     # ── Job Description Input ─────────────────────────────────────────────────
     st.subheader("📄 Step 1 — Enter the Job Details")
 
+    sp_connected = st.session_state.get('sharepoint_config', {}).get('connected', False)
+
+    jd_source_options = ["Upload a file (PDF or Word)"]
+    if sp_connected:
+        jd_source_options.append("Load from SharePoint")
+
     jd_mode = st.radio(
         "How would you like to provide the job details?",
-        ["Type or paste", "Upload a file (PDF or Word)"],
+        jd_source_options,
         horizontal=True,
         key="review_jd_mode"
     )
@@ -66,13 +82,23 @@ def render_analysis_tab(parsed_resumes, client):
                 st.success("✅ Job description loaded successfully!")
                 with st.expander("Preview what was loaded"):
                     st.text(job_desc[:600] + ("…" if len(job_desc) > 600 else ""))
-    else:
-        job_desc = st.text_area(
-            "Paste the job description here",
-            height=180,
-            placeholder="Paste the full job requirements here…",
-            key="review_jd_paste"
-        )
+
+    elif jd_mode == "Load from SharePoint":
+        _render_sharepoint_jd_panel()
+        job_desc = st.session_state.get("active_jd_text", "")
+
+    # ── Save current JD to SharePoint ─────────────────────────────────────────
+    if job_desc and job_desc.strip() and sp_connected:
+        with st.expander("☁️ Save this JD to SharePoint"):
+            jd_name = st.text_input(
+                "File name for this JD",
+                value="JD_" + datetime.now().strftime("%Y%m%d_%H%M") + ".txt",
+                key="jd_save_name"
+            )
+            if st.button("💾 Save JD to SharePoint", key="save_jd_btn"):
+                sp = st.session_state.sharepoint_config
+                if upload_jd_to_sharepoint(sp, job_desc, jd_name):
+                    st.success(f"✅ JD saved to SharePoint as **{jd_name}**")
 
     if not job_desc or not job_desc.strip():
         st.info("👆 Please enter a job description above to continue.")
@@ -108,11 +134,103 @@ def render_analysis_tab(parsed_resumes, client):
         _render_results(client)
 
 
+
+def _render_sharepoint_jd_panel():
+    """
+    Shows all JDs saved in SharePoint.
+    - My JDs: uploaded by the current logged-in user
+    - All JDs: every JD in the folder
+    HR can load a JD, or delete one (with confirmation pop-up).
+    """
+    sp = st.session_state.get('sharepoint_config', {})
+    current_user = st.session_state.get('current_user_name', '')
+
+    with st.spinner("Loading JDs from SharePoint…"):
+        all_jds = list_jds_from_sharepoint(sp)
+
+    if not all_jds:
+        st.info("No job descriptions found in SharePoint yet. Save one using the option below.")
+        return
+
+    # Split into mine vs others
+    my_jds    = [j for j in all_jds if j['created_by'].lower() == current_user.lower()] if current_user else []
+    other_jds = [j for j in all_jds if j not in my_jds]
+
+    # ── My JDs dropdown ───────────────────────────────────────────────────────
+    st.markdown("**📂 My JDs** *(uploaded by you)*")
+    if my_jds:
+        my_names = [j['name'] for j in my_jds]
+        sel_my = st.selectbox("Select one of your JDs to load",
+                              ["— select —"] + my_names, key="sp_my_jd_select")
+        if sel_my != "— select —":
+            jd_obj = next(j for j in my_jds if j['name'] == sel_my)
+            if st.button("📥 Load this JD", key="load_my_jd"):
+                text = download_jd_from_sharepoint(jd_obj['download_url'])
+                if text:
+                    st.session_state['active_jd_text'] = text
+                    st.success(f"✅ Loaded: {sel_my}")
+    else:
+        st.caption("You haven't uploaded any JDs yet.")
+
+    st.divider()
+
+    # ── All available JDs dropdown ────────────────────────────────────────────
+    st.markdown("**☁️ All Available JDs** *(from SharePoint)*")
+    if other_jds:
+        other_names = [j['name'] for j in other_jds]
+        sel_other = st.selectbox("Select a JD to load",
+                                 ["— select —"] + other_names, key="sp_other_jd_select")
+        if sel_other != "— select —":
+            jd_obj = next(j for j in other_jds if j['name'] == sel_other)
+            col_load, col_del = st.columns([1, 1])
+            with col_load:
+                if st.button("📥 Load this JD", key="load_other_jd"):
+                    text = download_jd_from_sharepoint(jd_obj['download_url'])
+                    if text:
+                        st.session_state['active_jd_text'] = text
+                        st.success(f"✅ Loaded: {sel_other}")
+            with col_del:
+                if st.button("🗑️ Delete this JD", key="del_other_jd", type="secondary"):
+                    st.session_state['_jd_pending_delete'] = jd_obj
+                    st.rerun()
+    else:
+        st.caption("No other JDs in SharePoint.")
+
+    # ── Delete confirmation pop-up ────────────────────────────────────────────
+    if st.session_state.get('_jd_pending_delete'):
+        jd_to_del = st.session_state['_jd_pending_delete']
+        st.warning(
+            f"⚠️ Are you sure you want to **permanently delete** "
+            f"**{jd_to_del['name']}** from SharePoint? This cannot be undone."
+        )
+        col_yes, col_no, _ = st.columns([1, 1, 3])
+        with col_yes:
+            if st.button("✅ Yes, delete it", key="confirm_del_jd", type="primary"):
+                if delete_jd_from_sharepoint(sp, jd_to_del['item_id']):
+                    st.success(f"✅ Deleted: {jd_to_del['name']}")
+                del st.session_state['_jd_pending_delete']
+                st.rerun()
+        with col_no:
+            if st.button("❌ Cancel", key="cancel_del_jd"):
+                del st.session_state['_jd_pending_delete']
+                st.rerun()
+
+    # Show currently loaded JD preview
+    if st.session_state.get('active_jd_text'):
+        with st.expander("Preview loaded JD"):
+            st.text(st.session_state['active_jd_text'][:600] + "…")
+
+
 def _run_full_analysis(parsed_resumes, client, job_desc):
     """Score every candidate with AI only. Sort by score descending."""
     st.session_state.review_results = []
     st.session_state.selected_for_pool = set()
     st.session_state.review_job_desc = job_desc
+
+    # Clear cached docs so they regenerate against the new JD
+    for key in list(st.session_state.keys()):
+        if key.startswith(('docx_bytes_', 'pptx_bytes_', 'detailed_', 'doc_check_')):
+            del st.session_state[key]
 
     analyzer = ResumeAnalyzer(client)
     res_list = parsed_resumes if isinstance(parsed_resumes, list) else [parsed_resumes]
@@ -192,6 +310,43 @@ def _render_results(client):
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader(f"📋 All {total} Candidates — ranked by AI score")
 
+    # ── Pre-generate docs silently for all candidates so download is 1-click ──
+    for idx, item in enumerate(results):
+        name    = item['metadata'].get('name', f"Candidate_{idx + 1}")
+        doc_key = f"docx_bytes_{name}"
+        ppt_key = f"pptx_bytes_{name}"
+        det_key = f"detailed_{name}"
+        chk_key = f"doc_check_{name}"
+
+        if doc_key not in st.session_state or ppt_key not in st.session_state:
+            resume_text = st.session_state.get('resume_texts', {}).get(name, str(item['metadata']))
+
+            if det_key not in st.session_state:
+                try:
+                    st.session_state[det_key] = extract_detailed_resume_data(
+                        client, resume_text, item['metadata']
+                    )
+                except Exception:
+                    st.session_state[det_key] = item['metadata']
+
+            detailed = st.session_state[det_key]
+
+            if doc_key not in st.session_state:
+                try:
+                    check = check_template_completeness(detailed)
+                    st.session_state[chk_key] = check
+                    st.session_state[doc_key] = generate_resume_docx(detailed)
+                except Exception:
+                    st.session_state[doc_key] = None
+
+            if ppt_key not in st.session_state:
+                try:
+                    mapped = map_to_template_format(detailed)
+                    st.session_state[ppt_key] = generate_candidate_ppt({**detailed, **mapped})
+                except Exception:
+                    st.session_state[ppt_key] = None
+
+    # ── Render candidate cards ────────────────────────────────────────────────
     for idx, item in enumerate(results):
         meta        = item['metadata']
         analysis    = item['analysis']
@@ -199,16 +354,18 @@ def _render_results(client):
         name        = meta.get('name', f"Candidate_{idx + 1}")
         is_selected = name in selected
 
-        selected_tag = "☑ Added to Pool" if is_selected else "☐ Not Selected"
-        expander_title = f"#{idx + 1}  {name}   |   🎯 {final_score}% match   |   {selected_tag}"
+        selected_tag   = "☑ Added to Pool" if is_selected else "☐ Not Selected"
+        expander_title = f"#{idx + 1}  {name}  |  🎯 {final_score}% match  |  {selected_tag}"
 
-        with st.expander(expander_title, expanded=(idx == 0 and not is_selected)):
-
-            # Checkbox — with spinner message on selection
+        # ── Checkbox OUTSIDE expander so HR can select without opening card ──
+        col_chk, col_card = st.columns([0.01, 0.99])
+        with col_chk:
             checked = st.checkbox(
-                f"Add **{name}** to the Candidate Pool",
+                f"Select {name}",
                 value=is_selected,
                 key=f"chk_{idx}",
+                help=f"Add {name} to the Candidate Pool",
+                label_visibility="collapsed",
             )
             if checked and name not in st.session_state.selected_for_pool:
                 with st.spinner(f"Adding {name} to Candidate Pool…"):
@@ -218,15 +375,18 @@ def _render_results(client):
                 st.session_state.selected_for_pool.discard(name)
                 st.rerun()
 
-            st.markdown("<br>", unsafe_allow_html=True)
+        with col_card:
+            with st.expander(expander_title, expanded=(idx == 0 and not is_selected)):
 
-            _render_score_section(meta, final_score,
-                                     item.get("breakdown", {}),
-                                     item.get("reason", ""))
-            st.markdown("<br>", unsafe_allow_html=True)
-            _render_quality_section(analysis)
-            st.markdown("<br>", unsafe_allow_html=True)
-            _render_doc_buttons(client, name, meta, idx)
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                _render_score_section(meta, final_score,
+                                      item.get("breakdown", {}),
+                                      item.get("reason", ""))
+                st.markdown("<br>", unsafe_allow_html=True)
+                _render_quality_section(analysis)
+                st.markdown("<br>", unsafe_allow_html=True)
+                _render_doc_buttons(client, name, meta, idx)
 
     if selected:
         st.divider()
@@ -304,7 +464,7 @@ def _render_score_breakdown(final_score, breakdown, reason):
         unsafe_allow_html=True
     )
 
-    # ── One st.markdown per bar so Streamlit renders it properly ─────────────
+    # ── One st.markdown per bar ───────────────────────────────────────────────
     for dim, score in breakdown.items():
         weight_label = weights.get(dim, "")
         pct = max(0, min(100, score))
@@ -350,7 +510,7 @@ def _render_score_breakdown(final_score, breakdown, reason):
             unsafe_allow_html=True
         )
 
-    # ── Formula footnote + close container ───────────────────────────────────
+    # ── Formula footnote ──────────────────────────────────────────────────────
     st.markdown(
         """<div style="background:#F9FAFB; padding:4px 22px 18px 22px;
                 border-radius:0 0 12px 12px; border:1px solid #E5E7EB;
@@ -381,10 +541,7 @@ def _render_quality_section(analysis):
         </div>""", unsafe_allow_html=True)
 
     def yellow_bullets(label, items):
-        """Always render as bullet list — one point per line, no run-on sentences."""
         import re
-        # Each item from the list may itself be a long sentence — split further
-        # on ". Capital" or ", Capital" patterns to get atomic points
         atomic = []
         for raw in items:
             parts = re.split(r'(?<=[.!?])\s+(?=[A-Z])', str(raw).strip())
@@ -397,7 +554,6 @@ def _render_quality_section(analysis):
             return
 
         if len(atomic) == 1:
-            # Single short point — show inline
             st.markdown(
                 f'''<div style="background:#FFFDE7; border:1px solid #FDD835;
                         border-radius:8px; padding:10px 14px; margin-bottom:8px;">
@@ -436,123 +592,79 @@ def _render_quality_section(analysis):
     if concerns:
         yellow_bullets("Points that need a closer look", concerns)
 
-    # Areas of knowledge — removed per mentor request
-
 
 def _render_doc_buttons(client, name, meta, idx):
-    """Word doc + PPT buttons inline in the candidate card."""
-    st.markdown("#### 📄 Structure Resume in NexTurn Format")
+    """NexTurn Profile Export — single-click download (pre-generated on load)."""
+    st.markdown("#### 📋 Export to NexTurn Format")
 
-    doc_key   = f"docx_bytes_{name}"
-    ppt_key   = f"pptx_bytes_{name}"
-    check_key = f"doc_check_{name}"
-    det_key   = f"detailed_{name}"
+    safe    = name.replace(' ', '_').replace('/', '_')
+    doc_key = f"docx_bytes_{name}"
+    ppt_key = f"pptx_bytes_{name}"
+    chk_key = f"doc_check_{name}"
 
     col_word, col_ppt = st.columns(2)
 
     with col_word:
-        if st.button("📝 Create Word Document", key=f"word_{idx}", use_container_width=True):
-            if not client:
-                st.error("AI client not available.")
-            else:
-                with st.spinner(f"Building Word doc for {name}…"):
-                    resume_text  = st.session_state.get('resume_texts', {}).get(name, str(meta))
-                    detailed     = extract_detailed_resume_data(client, resume_text, meta)
-                    completeness = check_template_completeness(detailed)
-                    st.session_state[check_key] = completeness
-                    st.session_state[det_key]   = detailed
-                    st.session_state[doc_key]   = (
-                        generate_resume_docx(detailed)
-                        if not completeness['has_critical_gaps'] else None
-                    )
-
-        if check_key in st.session_state:
-            comp = st.session_state[check_key]
-            if comp['has_critical_gaps']:
-                st.warning("⚠️ Resume is missing key details — document may be incomplete.")
-            elif comp['warnings']:
-                for w in comp['warnings'][:2]:
-                    st.caption(f"ℹ️ {w}")
-
-        if doc_key in st.session_state and st.session_state[doc_key]:
-            safe = name.replace(' ', '_').replace('/', '_')
+        docx_bytes = st.session_state.get(doc_key)
+        if docx_bytes:
             st.download_button(
                 "⬇️ Download Word Doc",
-                data=st.session_state[doc_key],
+                data=docx_bytes,
                 file_name=f"{safe}_resume.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
                 key=f"dl_word_{idx}"
             )
+        else:
+            st.caption("⏳ Word doc generating…")
 
     with col_ppt:
-        if st.button("📊 Create PPT Profile", key=f"ppt_{idx}", use_container_width=True):
-            if not client:
-                st.error("AI client not available.")
-            else:
-                with st.spinner(f"Building PPT for {name}…"):
-                    if det_key not in st.session_state:
-                        resume_text = st.session_state.get('resume_texts', {}).get(name, str(meta))
-                        st.session_state[det_key] = extract_detailed_resume_data(client, resume_text, meta)
-                    detailed = st.session_state[det_key]
-                    # Run completeness check for PPT warnings too
-                    ppt_check = check_template_completeness(detailed)
-                    st.session_state[f"ppt_check_{name}"] = ppt_check
-                    st.session_state[ppt_key] = generate_candidate_ppt(detailed)
-
-        # PPT warnings — same detail level as Word doc warnings
-        if f"ppt_check_{name}" in st.session_state:
-            ppt_comp = st.session_state[f"ppt_check_{name}"]
-            if ppt_comp.get('has_critical_gaps'):
-                st.warning(
-                    "⚠️ **PPT may be incomplete** — the resume is missing critical details "
-                    "(e.g. name or work experience). Some slides may be empty or sparse."
-                )
-            elif ppt_comp.get('warnings'):
-                st.markdown(
-                    "<p style='font-size:0.93rem; color:#555; margin:4px 0 2px 0;'>"
-                    "ℹ️ <strong>Information gaps found in PPT:</strong></p>",
-                    unsafe_allow_html=True
-                )
-                for w in ppt_comp['warnings']:
-                    label = w.lower()
-                    if 'work experience' in label or 'employment' in label:
-                        icon, detail = "💼", "Work history section is missing or incomplete — experience slides may be empty."
-                    elif 'project' in label:
-                        icon, detail = "🚀", "No projects found — the projects slide will be skipped."
-                    elif 'skill' in label:
-                        icon, detail = "💻", "Skills section not detected — the skills area on slide 1 will be blank."
-                    elif 'education' in label:
-                        icon, detail = "🎓", "Education details missing — that section will show a placeholder."
-                    elif 'certification' in label:
-                        icon, detail = "🏆", "No certifications found — that section will be omitted."
-                    elif 'summary' in label or 'objective' in label:
-                        icon, detail = "📝", "No professional summary found — the summary section will be skipped."
-                    else:
-                        icon, detail = "ℹ️", w
-                    st.markdown(
-                        f"<div style='background:#FFF8E1; border-left:3px solid #F59E0B; "
-                        f"border-radius:6px; padding:7px 12px; margin:4px 0; font-size:0.9rem; color:#78350F;'>"
-                        f"{icon} {detail}</div>",
-                        unsafe_allow_html=True
-                    )
-
-        if ppt_key in st.session_state and st.session_state[ppt_key]:
-            safe = name.replace(' ', '_').replace('/', '_')
+        pptx_bytes = st.session_state.get(ppt_key)
+        if pptx_bytes:
             st.download_button(
-                "⬇️ Download PPT",
-                data=st.session_state[ppt_key],
+                "⬇️ Download PPT Profile",
+                data=pptx_bytes,
                 file_name=f"{safe}_profile.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 use_container_width=True,
                 key=f"dl_ppt_{idx}"
+            )
+        else:
+            st.caption("⏳ PPT generating…")
+
+    # ── Completeness warnings shown below buttons ─────────────────────────────
+    check = st.session_state.get(chk_key)
+    if check and check.get('warnings'):
+        for w in check['warnings']:
+            w_lower = w.lower()
+            if 'name' in w_lower:
+                icon = "👤"
+            elif 'experience' in w_lower or 'work' in w_lower:
+                icon = "💼"
+            elif 'project' in w_lower:
+                icon = "🚀"
+            elif 'skill' in w_lower:
+                icon = "💻"
+            elif 'education' in w_lower:
+                icon = "🎓"
+            elif 'summary' in w_lower:
+                icon = "📝"
+            elif 'company' in w_lower:
+                icon = "🏢"
+            else:
+                icon = "ℹ️"
+            st.markdown(
+                f"<div style='background:#FFF8E1; border-left:3px solid #F59E0B; "
+                f"border-radius:6px; padding:6px 12px; margin:3px 0; "
+                f"font-size:0.88rem; color:#78350F;'>"
+                f"{icon} {w}</div>",
+                unsafe_allow_html=True
             )
 
 
 def _score_single(client, candidate_data: dict, job_desc: str) -> tuple:
     """
     AI-only scoring using llama-3.3-70b-versatile.
-    Upgraded from 8b-instant because the AI score now carries 100% weight.
     """
     from utils.groq_client import create_groq_completion
     fallback_client = st.session_state.get('fallback_client')

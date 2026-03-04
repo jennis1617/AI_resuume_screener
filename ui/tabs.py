@@ -43,7 +43,10 @@ def render_upload_tab():
         "Where are the resumes coming from?",
         ["📁 Upload Manually", "☁️ Retrieve from SharePoint"],
         horizontal=True,
+        key="upload_method_radio",
     )
+    # Store so sidebar can check whether SharePoint is currently selected
+    st.session_state['upload_method'] = upload_method
 
     # ── SharePoint ─────────────────────────────────────────────────────────────
     if upload_method == "☁️ Retrieve from SharePoint":
@@ -73,7 +76,7 @@ def render_upload_tab():
                     st.session_state.resume_texts = {}
                     st.session_state.resume_metadata = {}
 
-                    seen_candidate_names = set()  # deduplicate by extracted name
+                    seen_candidate_names = set()
 
                     for idx, file_data in enumerate(downloaded_files):
                         status.text(f"Reading: {file_data['name']}")
@@ -91,7 +94,6 @@ def render_upload_tab():
                                 client, text, file_data['name'], mask_pii_enabled, upload_date
                             )
                             if parsed:
-                                # Skip if we already have a resume for this candidate name
                                 candidate_name = parsed.get('name', '').strip().lower()
                                 if candidate_name and candidate_name in seen_candidate_names:
                                     progress.progress((idx + 1) / len(downloaded_files))
@@ -133,11 +135,11 @@ def render_upload_tab():
             # Use a placeholder so the metric updates immediately after parsing
             resumes_ready_placeholder = st.empty()
             resumes_ready_placeholder.metric(
-                "✅ Resumes Received", len(st.session_state.parsed_resumes)
+                "✅ Resumes Ready", len(st.session_state.parsed_resumes)
             )
 
         if uploaded_files and client:
-            if st.button("🚀 Read All Resumes", type="primary"):
+            if st.button("Read All Resumes", type="primary"):
                 progress = st.progress(0)
                 status = st.empty()
 
@@ -169,7 +171,7 @@ def render_upload_tab():
                     st.session_state.candidates_df = pd.DataFrame(st.session_state.parsed_resumes)
                     # Refresh the metric immediately with the new count
                     resumes_ready_placeholder.metric(
-                        "✅ Resumes Received", len(st.session_state.parsed_resumes)
+                        "✅ Resumes Ready", len(st.session_state.parsed_resumes)
                     )
                     st.success(
                         f"📥 Received {len(st.session_state.parsed_resumes)} resumes — "
