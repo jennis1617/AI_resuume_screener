@@ -1,9 +1,6 @@
 """
-Candidate Pool Tab — simplified per mentor review:
-- Shows pool summary table only
-- Download as CSV + Save to SharePoint
-- No individual profiles (those are in the Review tab now)
-- No 'Remove from pool' section
+Candidate Pool Tab 
+
 """
 
 import io

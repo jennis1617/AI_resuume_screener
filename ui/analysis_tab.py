@@ -1,13 +1,6 @@
 """
-Candidate Review & Scoring Tab — updated per mentor review:
-1. AI-only scoring (no hybrid/semantic) using llama-3.3-70b-versatile
-2. Candidates sorted highest score first
-3. Info bubble rewritten as short bullet points
-4. Button renamed to 'Run AI Screening'
-5. Quality check: green/yellow only (no red)
-6. Areas of knowledge removed
-7. Word doc + PPT buttons per candidate card
-8. Spinner shows 'Adding [name] to Candidate Pool...' on checkbox
+Candidate Review & Scoring Tab
+
 """
 
 import json

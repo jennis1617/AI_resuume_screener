@@ -1,7 +1,6 @@
 """
 UI Tab rendering functions - Upload and Analytics only.
-Candidate Review & Scoring is in ui/analysis_tab.py
-Candidate Pool is in ui/candidate_pool_tab.py
+
 """
 
 import streamlit as st

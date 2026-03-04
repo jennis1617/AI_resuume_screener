@@ -3,7 +3,6 @@ PPT Generator — uses the NexTurn sample_ppt_template.pptx as a base.
 Clears each slide content and rewrites with candidate data,
 preserving original layout, fonts and positioning.
 
-Place sample_ppt_template.pptx in templates/ folder next to app.py.
 """
 
 import io
