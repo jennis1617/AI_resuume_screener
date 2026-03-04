@@ -46,7 +46,7 @@ def render_analysis_tab(parsed_resumes, client):
         <ul style="color:#2C3E50; margin:0; padding-left:18px;
                    font-size:0.95rem; line-height:1.85;">
             <li>Paste or upload the <strong>Job Description</strong> below</li>
-            <li>Click <strong>Run AI Screening</strong> — AI scores every resume against the job</li>
+            <li>Click <strong>Run AI Screening</strong> — AI scores every resume against the JD</li>
             <li>Results appear ranked by score, <strong>highest first</strong></li>
             <li>☑️ Select candidates at your discretion for <strong>interview consideration</strong></li>
             <li>📋 AI generates a <strong>NexTurn-compatible</strong> structured profile document per candidate</li>
