@@ -1,15 +1,17 @@
 """
-SharePoint Integration Module - Updated with Microsoft Graph API (MSAL)
-Uses App-Only authentication via Azure AD for robust enterprise connectivity.
+SharePoint Integration Module
+Microsoft Graph API + MSAL Authentication
 """
 
 import streamlit as st
-import io
-import os
 import requests
+import io
 from datetime import datetime
 
-# ── Dependency Check
+# ------------------------------------------------
+# Dependency Check
+# ------------------------------------------------
+
 SHAREPOINT_AVAILABLE = False
 SHAREPOINT_ERROR = None
 
@@ -17,206 +19,380 @@ try:
     import msal
     SHAREPOINT_AVAILABLE = True
 except ImportError as e:
-    SHAREPOINT_AVAILABLE = False
     SHAREPOINT_ERROR = str(e)
-except Exception as e:
-    SHAREPOINT_AVAILABLE = False
-    SHAREPOINT_ERROR = f"Unexpected error: {str(e)}"
 
 
-# ── SharePoint Uploader Class 
+# ------------------------------------------------
+# SharePoint Uploader
+# ------------------------------------------------
 
 class SharePointUploader:
-    """Handles Microsoft Graph API interactions for SharePoint."""
 
-    def __init__(self, tenant_id: str, client_id: str, client_secret: str):
-        self.tenant_id = tenant_id
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.access_token = self._get_access_token()
+    def __init__(self, tenant_id, client_id, client_secret):
 
-    def _get_access_token(self) -> str:
-        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
+
         app = msal.ConfidentialClientApplication(
-            self.client_id,
+            client_id,
             authority=authority,
-            client_credential=self.client_secret
+            client_credential=client_secret
         )
+
         token_response = app.acquire_token_for_client(
             scopes=["https://graph.microsoft.com/.default"]
         )
+
         if "access_token" not in token_response:
-            raise Exception(f"Auth failed: {token_response.get('error_description', 'Unknown error')}")
-        return token_response["access_token"]
+            raise Exception("Authentication failed")
 
-    def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {self.access_token}"}
+        self.access_token = token_response["access_token"]
 
-    # Upload
-    def upload_file(
-        self,
-        site_id: str,
-        drive_id: str,
-        folder_path: str,
-        file_name: str,
-        content: bytes,
-        content_type: str = "application/octet-stream",
-    ) -> dict:
+    def _headers(self):
+        return {
+            "Authorization": f"Bearer {self.access_token}"
+        }
+
+    # ------------------------------------------------
+    # Upload File
+    # ------------------------------------------------
+
+    def upload_file(self, site_id, drive_id, folder_path, file_name, content):
+
         clean_path = folder_path.strip("/")
+
         url = (
             f"https://graph.microsoft.com/v1.0/sites/{site_id}"
             f"/drives/{drive_id}/root:/{clean_path}/{file_name}:/content"
         )
-        headers = {**self._headers(), "Content-Type": content_type}
+
+        headers = {
+            **self._headers(),
+            "Content-Type": "application/octet-stream"
+        }
+
         response = requests.put(url, headers=headers, data=content)
+
         if response.status_code not in (200, 201):
-            raise Exception(f"Upload failed [{response.status_code}]: {response.text}")
+            raise Exception(response.text)
+
         return response.json()
 
-    def upload_csv(
-        self, site_id: str, drive_id: str, folder_path: str, file_name: str, df
-    ) -> dict:
-        import pandas as pd
-        buf = io.StringIO()
-        df.to_csv(buf, index=False)
-        content = buf.getvalue().encode("utf-8")
-        return self.upload_file(site_id, drive_id, folder_path, file_name, content, "text/csv")
+    # ------------------------------------------------
+    # List Files
+    # ------------------------------------------------
 
-    # ── List & Download ─────────────────────────────────────────────────────
-    def list_files(self, site_id: str, drive_id: str, folder_path: str) -> list:
+    def list_files(self, site_id, drive_id, folder_path):
+
         clean_path = folder_path.strip("/")
+
         url = (
             f"https://graph.microsoft.com/v1.0/sites/{site_id}"
             f"/drives/{drive_id}/root:/{clean_path}:/children"
         )
 
-        # FIX 1: Collect ALL pages — Graph API paginates at 100 items by default.
-        # Without this, only the first 100 files are fetched, and repeated calls
-        # to the same page can cause apparent duplicates.
         all_items = []
+
         while url:
+
             response = requests.get(url, headers=self._headers())
+
             if response.status_code != 200:
-                raise Exception(f"List failed [{response.status_code}]: {response.text}")
+                raise Exception(response.text)
+
             data = response.json()
+
             all_items.extend(data.get("value", []))
-            url = data.get("@odata.nextLink")  # None when there are no more pages
 
-        # Keep only files (not folders)
-        files = [i for i in all_items if "file" in i]
+            url = data.get("@odata.nextLink")
 
-        # FIX 2: Deduplicate by filename — keeps the first occurrence only.
-        # Pagination overlap or the same file appearing via multiple paths
-        # can cause the same resume to appear more than once.
+        files = [f for f in all_items if "file" in f]
+
+        # remove duplicates
         seen = set()
-        unique_files = []
+        unique = []
+
         for f in files:
-            fname = f.get("name", "").strip().lower()
-            if fname and fname not in seen:
-                seen.add(fname)
-                unique_files.append(f)
+            name = f.get("name", "").lower()
 
-        return unique_files
+            if name not in seen:
+                seen.add(name)
+                unique.append(f)
 
-    def download_file(self, download_url: str) -> bytes:
-        """Download using the @microsoft.graph.downloadUrl provided in list results."""
+        return unique
+
+    # ------------------------------------------------
+    # Download File
+    # ------------------------------------------------
+
+    def download_file(self, download_url):
+
         response = requests.get(download_url)
         response.raise_for_status()
+
         return response.content
 
 
-# ── Streamlit-aware helper functions ──────────────────────────────────────────
+# ------------------------------------------------
+# Helper
+# ------------------------------------------------
 
-def _make_uploader(config: dict) -> SharePointUploader:
-    """Build an uploader from the session config dict."""
+def _make_uploader(config):
+
     return SharePointUploader(
-        tenant_id=config["tenant_id"],
-        client_id=config["client_id"],
-        client_secret=config["client_secret"],
+        config["tenant_id"],
+        config["client_id"],
+        config["client_secret"]
     )
 
 
-def connect_to_sharepoint(tenant_id: str, client_id: str, client_secret: str) -> dict | None:
-    """
-    Authenticate and return a config dict that can be stored in session state.
-    Returns None on failure.
-    """
-    try:
-        uploader = SharePointUploader(tenant_id, client_id, client_secret)
-        # Quick connectivity probe – list root of the drive
-        site_id = st.session_state.sharepoint_config.get("site_id", "")
-        drive_id = st.session_state.sharepoint_config.get("drive_id", "")
-        if site_id and drive_id:
-            uploader.list_files(site_id, drive_id, "/")
-        return uploader
-    except Exception as e:
-        st.error(f"SharePoint connection error: {str(e)}")
-        return None
+# ------------------------------------------------
+# Upload JD
+# ------------------------------------------------
 
+def upload_jd_to_sharepoint(config, uploaded_file, uploaded_by):
 
-def upload_to_sharepoint(config: dict, file_content: bytes, file_name: str) -> bool:
-    """Upload a single file using Graph API."""
     try:
+
         uploader = _make_uploader(config)
+
+        # embed uploader name in file
+        content = uploaded_file.getvalue()
+
+        filename = uploaded_file.name
+
         uploader.upload_file(
-            site_id=config["site_id"],
-            drive_id=config["drive_id"],
-            folder_path=config["output_folder_path"],
-            file_name=file_name,
-            content=file_content,
+            config["site_id"],
+            config["drive_id"],
+            config["jd_folder_path"],
+            filename,
+            content
         )
+
         return True
+
     except Exception as e:
-        st.error(f"Upload error: {str(e)}")
+
+        st.error(f"Upload failed: {e}")
         return False
 
 
-def download_from_sharepoint(config: dict) -> list:
-    """
-    Download all supported resume files from the configured folder.
-    Returns list of dicts: {name, content, timestamp}
-    """
+# ------------------------------------------------
+# List JDs
+# ------------------------------------------------
+
+def list_jds_from_sharepoint(config):
+
     try:
+
         uploader = _make_uploader(config)
+
         items = uploader.list_files(
-            site_id=config["site_id"],
-            drive_id=config["drive_id"],
-            folder_path=config["input_folder_path"],
+            config["site_id"],
+            config["drive_id"],
+            config["jd_folder_path"]
         )
 
-        downloaded = []
+        jds = []
+
         for item in items:
+
             name = item.get("name", "")
-            ext = name.rsplit(".", 1)[-1].lower()
-            if ext not in ("pdf", "docx"):
+
+            if not name.lower().endswith((".pdf", ".docx", ".txt")):
                 continue
 
-            dl_url = item.get("@microsoft.graph.downloadUrl")
-            if not dl_url:
-                continue
+            created_by = (
+                item.get("createdBy", {})
+                .get("user", {})
+                .get("displayName", "Unknown")
+            )
 
-            content = uploader.download_file(dl_url)
-            timestamp = item.get("createdDateTime", datetime.now().isoformat())
-            downloaded.append({"name": name, "content": content, "timestamp": timestamp})
+            jds.append({
+                "name": name,
+                "item_id": item.get("id"),
+                "uploaded_by": created_by,
+                "download_url": item.get("@microsoft.graph.downloadUrl")
+            })
 
-        return downloaded
+        return jds
+
     except Exception as e:
-        st.error(f"Download error: {str(e)}")
+
+        st.error(f"Could not list JDs: {e}")
         return []
 
 
-def save_csv_to_sharepoint(config: dict, df, filename: str) -> bool:
-    """Save a DataFrame as CSV to SharePoint."""
+# ------------------------------------------------
+# Split JDs by User
+# ------------------------------------------------
+
+def split_jds_by_user(config, current_user):
+
+    jds = list_jds_from_sharepoint(config)
+
+    my_jds = []
+    other_jds = []
+
+    for jd in jds:
+
+        uploader = jd["uploaded_by"].replace(".", " ").lower()
+        user = current_user.replace(".", " ").lower()
+
+        if uploader == user:
+            my_jds.append(jd)
+        else:
+            other_jds.append(jd)
+
+    return {
+        "my_jds": my_jds,
+        "other_jds": other_jds
+    }
+
+
+# ------------------------------------------------
+# Download JD
+# ------------------------------------------------
+
+def download_jd_from_sharepoint(download_url):
+
     try:
-        uploader = _make_uploader(config)
-        uploader.upload_csv(
-            site_id=config["site_id"],
-            drive_id=config["drive_id"],
-            folder_path=config.get("output_folder_path", config["output_folder_path"]),
-            file_name=filename,
-            df=df,
-        )
-        return True
+
+        response = requests.get(download_url)
+        response.raise_for_status()
+
+        return response.content
+
     except Exception as e:
-        st.error(f"Error saving CSV to SharePoint: {str(e)}")
+
+        st.error(f"Download error: {e}")
+        return None
+
+
+# ------------------------------------------------
+# Delete JD
+# ------------------------------------------------
+
+def delete_jd_from_sharepoint(config, item_id):
+
+    try:
+
+        uploader = _make_uploader(config)
+
+        url = (
+            f"https://graph.microsoft.com/v1.0/sites/{config['site_id']}"
+            f"/drives/{config['drive_id']}/items/{item_id}"
+        )
+
+        response = requests.delete(url, headers=uploader._headers())
+
+        if response.status_code == 204:
+            return True
+
+        raise Exception(response.text)
+
+    except Exception as e:
+
+        st.error(f"Delete failed: {e}")
         return False
+
+
+# ------------------------------------------------
+# Download resumes
+# ------------------------------------------------
+
+def download_from_sharepoint(config):
+
+    try:
+
+        uploader = _make_uploader(config)
+
+        items = uploader.list_files(
+            config["site_id"],
+            config["drive_id"],
+            config["input_folder_path"]
+        )
+
+        downloaded = []
+
+        for item in items:
+
+            name = item.get("name", "")
+
+            if not name.lower().endswith((".pdf", ".docx")):
+                continue
+
+            url = item.get("@microsoft.graph.downloadUrl")
+
+            content = uploader.download_file(url)
+
+            downloaded.append({
+                "name": name,
+                "content": content,
+                "timestamp": item.get("createdDateTime", datetime.now().isoformat())
+            })
+
+        return downloaded
+
+    except Exception as e:
+
+        st.error(f"Download error: {e}")
+        return []
+
+
+# ------------------------------------------------
+# Resume split by uploader
+# ------------------------------------------------
+
+def list_resumes_by_uploader(config, current_user):
+
+    try:
+
+        uploader = _make_uploader(config)
+
+        items = uploader.list_files(
+            config["site_id"],
+            config["drive_id"],
+            config["input_folder_path"]
+        )
+
+        my_resumes = []
+        other_resumes = []
+
+        for item in items:
+
+            name = item.get("name", "")
+
+            if not name.lower().endswith((".pdf", ".docx")):
+                continue
+
+            created_by = (
+                item.get("createdBy", {})
+                .get("user", {})
+                .get("displayName", "")
+            )
+
+            entry = {
+                "name": name,
+                "item_id": item.get("id"),
+                "created_by": created_by,
+                "download_url": item.get("@microsoft.graph.downloadUrl")
+            }
+
+            if created_by.lower() == current_user.lower():
+                my_resumes.append(entry)
+            else:
+                other_resumes.append(entry)
+
+        return {
+            "my_resumes": my_resumes,
+            "other_resumes": other_resumes
+        }
+
+    except Exception as e:
+
+        st.error(f"Could not list resumes: {e}")
+
+        return {
+            "my_resumes": [],
+            "other_resumes": []
+        }

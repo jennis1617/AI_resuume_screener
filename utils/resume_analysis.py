@@ -70,15 +70,133 @@ class ResumeAnalyzer:
         except Exception as e:
             print(f"Analysis error: {str(e)}")
             return self._empty_result()
+
+
+    #extracting the content from the resume
+    def extract_structured_resume(self, resume_text):
+    """
+    Extract structured resume data matching DOCX template variables.
+    Returns strict JSON matching template placeholders.
+    """
+
+    prompt = f"""
+    Extract resume information into STRICT JSON format.
+    Return ONLY valid JSON. No explanation text.
+
+    Required format:
+
+    {{
+      "name": "",
+      "role": "",
+      "professional_summary": "",
+      "experience_years": "",
+      "company_name": "",
+      "location": "",
+      "start_date": "",
+      "end_date": "",
+      "project1_name": "",
+      "project1_bullets": [],
+      "project2_name": "",
+      "project2_bullets": [],
+      "technologies_used": "",
+      "highest_education": "",
+      "college_name": "",
+      "education_dates": "",
+      "technical_skills": [],
+      "backend_languages": "",
+      "containers_and_orchestration": "",
+      "databases": "",
+      "operating_systems": "",
+      "version_control_tools": "",
+      "testing_tools": ""
+    }}
+
+    Resume:
+    {resume_text[:8000]}
+
+    IMPORTANT:
+    - Limit bullet arrays to maximum 6 items.
+    - Use empty strings if information is missing.
+    - Use empty arrays if no bullets or skills found.
+    """
+
+    try:
+        response = create_groq_completion(
+            self.client,
+            self.fallback_client,
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "You extract structured resume data. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=2000
+        )
+
+        content = response.choices[0].message.content.strip()
+
+        # Extract JSON safely
+        json_start = content.find('{')
+        json_end = content.rfind('}') + 1
+
+        if json_start != -1 and json_end > json_start:
+            parsed = json.loads(content[json_start:json_end])
+            return self._validate_structured_output(parsed)
+        else:
+            return self._empty_structured_result()
+
+    except Exception as e:
+        print(f"Structured extraction error: {str(e)}")
+        return self._empty_structured_result()
+
+    #--------------------#
     
-    def _empty_result(self):
-        """Return empty result structure."""
-        return {
-            "is_previous_employee": False,
-            "nexturn_history_details": "None",
-            "career_gaps": [],
-            "technical_anomalies": [],
-            "fake_indicators": [],
-            "domain_knowledge": [],
-            "summary": "Analysis could not be completed"
-        }
+    def _empty_structured_result(self):
+    return {
+        "name": "",
+        "role": "",
+        "professional_summary": "",
+        "experience_years": "",
+        "company_name": "",
+        "location": "",
+        "start_date": "",
+        "end_date": "",
+        "project1_name": "",
+        "project1_bullets": [],
+        "project2_name": "",
+        "project2_bullets": [],
+        "technologies_used": "",
+        "highest_education": "",
+        "college_name": "",
+        "education_dates": "",
+        "technical_skills": [],
+        "backend_languages": "",
+        "containers_and_orchestration": "",
+        "databases": "",
+        "operating_systems": "",
+        "version_control_tools": "",
+        "testing_tools": ""
+    }
+
+
+def _validate_structured_output(self, data):
+    """Ensure all required keys exist to prevent template crash"""
+
+    default = self._empty_structured_result()
+
+    for key in default:
+        if key not in data:
+            data[key] = default[key]
+
+    # Ensure lists are lists
+    list_fields = [
+        "project1_bullets",
+        "project2_bullets",
+        "technical_skills"
+    ]
+
+    for field in list_fields:
+        if not isinstance(data.get(field), list):
+            data[field] = []
+
+    return data

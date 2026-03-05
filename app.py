@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from PIL import Image
 
+
 try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
@@ -17,89 +18,168 @@ except ImportError:
 
 from config.settings import PAGE_CONFIG, CUSTOM_CSS
 from utils.groq_client import init_groq_client
+from utils.template_mapper import map_to_template_format
+from utils.doc_generator import generate_resume_docx
+from utils.ppt_generator import generate_candidate_ppt
 from ui.tabs import render_upload_tab, render_analytics_tab
 from ui.analysis_tab import render_analysis_tab
 from ui.candidate_pool_tab import render_candidate_pool_tab
+from utils.auth import login_page, logout
 
 st.set_page_config(**PAGE_CONFIG)
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# ── Session State ──────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session State Defaults
+# ─────────────────────────────────────────────────────────────────────────────
 _defaults = {
-    'parsed_resumes': [],
-    'candidates_df': None,
-    'matched_results': None,
-    'review_results': None,
-    'selected_for_pool': set(),
-    'resume_texts': {},
-    'resume_metadata': {},
-    'sharepoint_config': {
-        'tenant_id': os.getenv('TENANT_ID', ''),
-        'client_id': os.getenv('CLIENT_ID', ''),
-        'client_secret': os.getenv('CLIENT_SECRET', ''),
-        'site_id': os.getenv('SHAREPOINT_SITE_ID', ''),
-        'drive_id': os.getenv('SHAREPOINT_DRIVE_ID', ''),
-        'input_folder_path': os.getenv('INPUT_FOLDER_PATH', 'Demair/Sample resumes'),
-        'output_folder_path': os.getenv('OUTPUT_FOLDER_PATH', 'Demair/Resumes_database'),
-        'connected': False,
+    "parsed_resumes": [],
+    "candidates_df": None,
+    "matched_results": None,
+    "review_results": None,
+    "selected_for_pool": set(),
+    "resume_texts": {},
+    "resume_metadata": {},
+    "sharepoint_config": {
+        "tenant_id": os.getenv("TENANT_ID", ""),
+        "client_id": os.getenv("CLIENT_ID", ""),
+        "client_secret": os.getenv("CLIENT_SECRET", ""),
+        "site_id": os.getenv("SHAREPOINT_SITE_ID", ""),
+        "drive_id": os.getenv("SHAREPOINT_DRIVE_ID", ""),
+        "input_folder_path": os.getenv("INPUT_FOLDER_PATH", "Demair/Sample resumes"),
+        "output_folder_path": os.getenv("OUTPUT_FOLDER_PATH", "Demair/Resumes_database"),
+        "connected": False,
     },
 }
+
 for key, val in _defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Groq Client Initialization
+# ─────────────────────────────────────────────────────────────────────────────
 def _init_clients():
     client = None
     fallback_client = None
-    primary_key = os.getenv('GROQ_API_KEY', '')
-    fallback_key = os.getenv('GROQ_FALLBACK_API_KEY', '')
+
+    primary_key = os.getenv("GROQ_API_KEY", "")
+    fallback_key = os.getenv("GROQ_FALLBACK_API_KEY", "")
+
     if primary_key:
         try:
             client = init_groq_client(primary_key)
         except Exception:
             pass
+
     if fallback_key:
         try:
             fallback_client = init_groq_client(fallback_key)
         except Exception:
             pass
+
     return client, fallback_client
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SharePoint Initialization
+# ─────────────────────────────────────────────────────────────────────────────
 def _init_sharepoint():
     sp = st.session_state.sharepoint_config
-    if sp.get('connected'):
+
+    if sp.get("connected"):
         return
-    required = [sp.get('tenant_id'), sp.get('client_id'),
-                sp.get('client_secret'), sp.get('site_id'), sp.get('drive_id')]
+
+    required = [
+        sp.get("tenant_id"),
+        sp.get("client_id"),
+        sp.get("client_secret"),
+        sp.get("site_id"),
+        sp.get("drive_id"),
+    ]
+
     if not all(required):
         return
+
     try:
         import msal
+
         authority = f"https://login.microsoftonline.com/{sp['tenant_id']}"
         msal_app = msal.ConfidentialClientApplication(
-            sp['client_id'], authority=authority, client_credential=sp['client_secret'],
+            sp["client_id"],
+            authority=authority,
+            client_credential=sp["client_secret"],
         )
+
         token_res = msal_app.acquire_token_for_client(
             scopes=["https://graph.microsoft.com/.default"]
         )
+
         if "access_token" in token_res:
-            sp['connected'] = True
+            sp["connected"] = True
             st.session_state.sharepoint_config = sp
+
     except Exception:
         pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW: Document Generator Helper (Non-Disruptive)
+# ─────────────────────────────────────────────────────────────────────────────
+def generate_candidate_documents(candidate_data: dict):
+    """
+    Generates DOCX and PPT for a parsed candidate.
+    Returns (docx_bytes, ppt_bytes)
+    """
+    docx_bytes = None
+    ppt_bytes = None
+
+    try:
+        # ---------- DOCX ----------
+        mapped_data = map_to_template_format(candidate_data)
+
+        output_path = "generated_resume.docx"
+
+        generate_resume_docx(
+            "templates/sample_word_template.docx",
+            output_path,
+            mapped_data,
+        )
+
+        if os.path.exists(output_path):
+            with open(output_path, "rb") as f:
+                docx_bytes = f.read()
+
+        # ---------- PPT ----------
+        ppt_bytes = generate_candidate_ppt(candidate_data)
+
+    except Exception as e:
+        st.error(f"Document generation failed: {e}")
+
+    return docx_bytes, ppt_bytes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN APP
+# ─────────────────────────────────────────────────────────────────────────────
 def main():
+
     client, fallback_client = _init_clients()
     _init_sharepoint()
 
-    st.session_state['client'] = client
-    st.session_state['fallback_client'] = fallback_client
+    st.session_state["client"] = client
+    st.session_state["fallback_client"] = fallback_client
 
-    # ── Header ─────────────────────────────────────────────────────────────────
+    # Expose generator to other tabs safely
+    st.session_state["generate_candidate_documents"] = generate_candidate_documents
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Header
+    # ─────────────────────────────────────────────────────────────────────────
     st.markdown('<div class="nexturn-header">', unsafe_allow_html=True)
+
     try:
         logo = Image.open("logo.png")
         col1, col2, col3 = st.columns([1, 1.3, 1])
@@ -108,19 +188,29 @@ def main():
     except FileNotFoundError:
         st.error("⚠️ Logo file 'logo.png' not found in the app folder")
 
-    st.markdown('<hr style="margin: 20px 0; border: none; border-top: 2px solid #e0e0e0;">', unsafe_allow_html=True)
-    st.markdown("""
-    <h1 style="font-size: 3rem; font-weight: 700; color: #1a1a1a; text-align: center;
-               margin: 15px 0 10px 0; letter-spacing: -0.5px;">
-          Resume Screening System
-    </h1>
-    <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
-         Powered by Groq | Automated Intelligent Recruitment
-    </p>
-    """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<hr style="margin: 20px 0; border: none; border-top: 2px solid #e0e0e0;">',
+        unsafe_allow_html=True,
+    )
 
-    # ── Sidebar ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <h1 style="font-size: 3rem; font-weight: 700; color: #1a1a1a; text-align: center;
+                   margin: 15px 0 10px 0; letter-spacing: -0.5px;">
+              Resume Screening System
+        </h1>
+        <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
+             Powered by Groq | Automated Intelligent Recruitment
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Sidebar
+    # ─────────────────────────────────────────────────────────────────────────
     with st.sidebar:
         st.title("⚙️ Settings")
 
@@ -128,7 +218,7 @@ def main():
         mask_pii_enabled = st.checkbox(
             "Hide personal details when sending to AI(**PII Masking**)",
             value=True,
-            help="Redacts email addresses and phone numbers before any AI processing"
+            help="Redacts email addresses and phone numbers before any AI processing",
         )
 
         st.divider()
@@ -137,11 +227,16 @@ def main():
         use_date_filter = st.checkbox("Turn on date filter", value=False)
 
         start_date = end_date = None
+
         if use_date_filter:
-            if (st.session_state.candidates_df is not None and
-                    'submission_date' in st.session_state.candidates_df.columns):
+            if (
+                st.session_state.candidates_df is not None
+                and "submission_date" in st.session_state.candidates_df.columns
+            ):
                 try:
-                    df_dates = pd.to_datetime(st.session_state.candidates_df['submission_date'])
+                    df_dates = pd.to_datetime(
+                        st.session_state.candidates_df["submission_date"]
+                    )
                     min_date = df_dates.min().date()
                     max_date = df_dates.max().date()
                 except Exception:
@@ -158,32 +253,40 @@ def main():
                 value=(min_date, max_date),
                 format="YYYY-MM-DD",
             )
+
             start_date, end_date = date_range
             st.info(f"📅 Showing: {start_date} to {end_date}")
 
-    st.session_state['mask_pii_enabled'] = mask_pii_enabled
-    st.session_state['use_date_filter'] = use_date_filter
-    st.session_state['start_date'] = start_date
-    st.session_state['end_date'] = end_date
+    st.session_state["mask_pii_enabled"] = mask_pii_enabled
+    st.session_state["use_date_filter"] = use_date_filter
+    st.session_state["start_date"] = start_date
+    st.session_state["end_date"] = end_date
 
-    # ── 4 Tabs (pre-screening removed) ────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📤 Upload/Retrieve Resumes",
-        "🎯 Candidate Review & Scoring",
-        "👥 Candidate Pool",
-        "📈 Analytics",
-    ])
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tabs
+    # ─────────────────────────────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "📤 Upload/Retrieve Resumes",
+            "🎯 Candidate Review & Scoring",
+            "👥 Candidate Pool",
+            "📈 Analytics",
+        ]
+    )
 
     with tab1:
         render_upload_tab()
 
     with tab2:
-        parsed_resumes = st.session_state.get('parsed_resumes', [])
-        client_obj = st.session_state.get('client')
+        parsed_resumes = st.session_state.get("parsed_resumes", [])
+        client_obj = st.session_state.get("client")
+
         if parsed_resumes and client_obj:
             render_analysis_tab(parsed_resumes, client_obj)
         else:
-            st.info("📤 Please upload and process resumes in the **Upload Resumes** tab first.")
+            st.info(
+                "📤 Please upload and process resumes in the **Upload Resumes** tab first."
+            )
 
     with tab3:
         render_candidate_pool_tab()
@@ -191,15 +294,35 @@ def main():
     with tab4:
         render_analytics_tab()
 
-    # ── Footer ─────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Footer
+    # ─────────────────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("""
-    <div style="text-align: center; color: #666; padding: 20px;">
-        <p>AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
-        <p style="font-size: 0.85em;">© 2026 NEXTURN. All rights reserved.</p>
-    </div>
-    """, unsafe_allow_html=True)
+
+    st.markdown(
+        """
+        <div style="text-align: center; color: #666; padding: 20px;">
+            <p>AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
+            <p style="font-size: 0.85em;">© 2026 NEXTURN. All rights reserved.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ENTRY POINT WITH LOGIN
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+
+    # Initialize session key safely
+    if "user" not in st.session_state:
+        st.session_state["user"] = None
+
+    # If not logged in → show login only
+    if not st.session_state["user"]:
+        login_page()
+    else:
+        st.sidebar.success(f"Logged in as: {st.session_state['user']}")
+        logout()
+        main()

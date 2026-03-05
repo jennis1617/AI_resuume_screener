@@ -14,3 +14,5 @@ msal==1.24.0
 requests==2.31.0
 python-dotenv==1.0.0
 python-pptx
+docxtpl==0.16.7
+python-docx==0.8.11

@@ -154,3 +154,10 @@ COLUMN_DISPLAY_NAMES = {
     'submission_date': 'Submission Date',
     'filename': 'Resume File'
 }
+
+# SharePoint Folder Configuration
+SHAREPOINT_RESUME_FOLDER = "Resumes"
+SHAREPOINT_JD_FOLDER = "JobDescriptions"
+
+# Enable JD management features
+ENABLE_SHAREPOINT_JD_MANAGEMENT = True
