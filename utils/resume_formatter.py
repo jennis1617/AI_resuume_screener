@@ -1,31 +1,24 @@
 """
-Resume Formatter — generates Word doc matching the NexTurn template exactly.
-Layout: two-column table (main left, grey sidebar right).
-Page 1: Name, Role, Objective, Work Experience (left) | Edu, Skills (right sidebar)
-Page 2: Technologies Used + SKILLS breakdown
-
-Uses python-docx only (no external template engine needed).
+Resume Formatter — fills NexTurn Word template by direct w:t element replacement.
+Copies word_template.docx and replaces text by targeting exact XML elements,
+preserving all formatting, floating textboxes, margins and layout exactly.
 """
 
 import io
+import os
 import json
+import copy
 import streamlit as st
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from utils.groq_client import create_groq_completion
 
 
-# ── Colours (from ELIZABETH_CARTER reference) ─────────────────────────────────
-DARK_BLUE  = RGBColor(0x1F, 0x38, 0x64)
-MID_GREY   = RGBColor(0x44, 0x44, 0x44)
-BLUE_DATE  = RGBColor(0x2E, 0x74, 0xB5)
-LIGHT_GREY = RGBColor(0x55, 0x55, 0x55)
-SIDEBAR_BG = "B8C4CA"   # hex for shading XML
-RED        = RGBColor(0xFF, 0x00, 0x00)
+# ── Template path ─────────────────────────────────────────────────────────────
+TEMPLATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "templates", "word_template.docx"
+)
 
 
 # ── LLM extraction ────────────────────────────────────────────────────────────
@@ -37,36 +30,35 @@ def extract_detailed_resume_data(client, resume_text: str, candidate_meta: dict)
 
 RULES:
 - Extract exact text from the resume. Do not fabricate.
-- For work_experience bullets, extract actual bullet text verbatim.
-- Return ONLY this JSON (no markdown):
+- For bullets, extract actual bullet text verbatim (no leading dashes or bullets).
+- Return ONLY this JSON (no markdown, no explanation):
 {{
   "NAME": "Full Name",
   "ROLE": "Job Title",
   "PROFESSIONAL_SUMMARY": "2-3 sentence summary",
-  "experience_years": "X+",
+  "experience_years": "X.X",
   "COMPANY_NAME": "Most recent company",
   "LOCATION": "City, Country",
   "START_DATE": "Mon YYYY",
   "END_DATE": "Mon YYYY or Present",
-  "PROJECT1_NAME": "Primary project title",
-  "ABOUT_PROJECT_BULLET_1": "bullet 1",
-  "ABOUT_PROJECT_BULLET_2": "bullet 2",
-  "ABOUT_PROJECT_BULLET_3": "bullet 3",
-  "ABOUT_PROJECT_BULLET_4": "bullet 4",
-  "ABOUT_PROJECT_BULLET_5": "bullet 5",
-  "ABOUT_PROJECT_BULLET_6": "bullet 6",
-  "PROJECT2_NAME": "Second project title or empty",
-  "PROJECT2_BULLET_1": "bullet 1",
-  "PROJECT2_BULLET_2": "bullet 2",
-  "PROJECT2_BULLET_3": "bullet 3",
-  "PROJECT2_BULLET_4": "bullet 4",
-  "PROJECT2_BULLET_5": "bullet 5",
-  "PROJECT2_BULLET_6": "bullet 6",
+  "PROJECT1_NAME": "Primary project title with role e.g. ProjectName: Role",
+  "ABOUT_PROJECT_BULLET_1": "bullet text",
+  "ABOUT_PROJECT_BULLET_2": "bullet text",
+  "ABOUT_PROJECT_BULLET_3": "bullet text",
+  "ABOUT_PROJECT_BULLET_4": "bullet text",
+  "ABOUT_PROJECT_BULLET_5": "bullet text",
+  "ABOUT_PROJECT_BULLET_6": "bullet text",
+  "PROJECT2_NAME": "Second project title or empty string",
+  "PROJECT2_BULLET_1": "bullet text",
+  "PROJECT2_BULLET_2": "bullet text",
+  "PROJECT2_BULLET_3": "bullet text",
+  "PROJECT2_BULLET_4": "bullet text",
+  "PROJECT2_BULLET_5": "bullet text",
   "TECHNOLOGIES_USED": "Comma separated tech list",
-  "HIGHEST_EDUCATION": "Degree name",
+  "HIGHEST_EDUCATION": "Full degree e.g. B.E. in Computer Science Engineering",
   "COLLEGE_NAME": "University name",
-  "EDUCATION_DATES": "Year range",
-  "tech_stack": ["Skill1", "Skill2", "Skill3", "Skill4", "Skill5", "Skill6", "Skill7", "Skill8", "Skill9", "Skill10", "Skill11", "Skill12"],
+  "EDUCATION_DATES": "Month YYYY – Month YYYY",
+  "tech_stack": ["Skill1","Skill2","Skill3","Skill4","Skill5","Skill6","Skill7","Skill8","Skill9","Skill10","Skill11","Skill12"],
   "BACKEND_LANGUAGES": "e.g. Python, Java",
   "CONTAINERS_AND_ORCHESTRATION": "e.g. Docker, Kubernetes",
   "DATABASES": "e.g. PostgreSQL, MongoDB",
@@ -83,7 +75,7 @@ Resume:
             client, fallback_client,
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "You are a precise resume parser. Return only valid JSON with no markdown."},
+                {"role": "system", "content": "You are a precise resume parser. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
@@ -94,16 +86,13 @@ Resume:
         j_end   = content.rfind('}') + 1
         if j_start != -1 and j_end > j_start:
             data = json.loads(content[j_start:j_end])
-            # Fallback from meta for critical fields
-            if not data.get('NAME'):        data['NAME']  = candidate_meta.get('name', '')
-            if not data.get('ROLE'):        data['ROLE']  = candidate_meta.get('current_role', '')
-            if not data.get('experience_years'):
-                data['experience_years'] = str(candidate_meta.get('experience_years', ''))
+            if not data.get('NAME'):             data['NAME']  = candidate_meta.get('name', '')
+            if not data.get('ROLE'):             data['ROLE']  = candidate_meta.get('current_role', '')
+            if not data.get('experience_years'): data['experience_years'] = str(candidate_meta.get('experience_years', ''))
             return data
     except Exception as e:
         st.warning(f"Could not fully parse resume details: {e}")
 
-    # Fallback
     return {
         "NAME": candidate_meta.get('name', ''),
         "ROLE": candidate_meta.get('current_role', ''),
@@ -114,7 +103,7 @@ Resume:
         "PROJECT1_NAME": "",
         **{f"ABOUT_PROJECT_BULLET_{i}": "" for i in range(1, 7)},
         "PROJECT2_NAME": "",
-        **{f"PROJECT2_BULLET_{i}": "" for i in range(1, 7)},
+        **{f"PROJECT2_BULLET_{i}": "" for i in range(1, 6)},
         "TECHNOLOGIES_USED": "",
         "HIGHEST_EDUCATION": candidate_meta.get('education', ''),
         "COLLEGE_NAME": "", "EDUCATION_DATES": "",
@@ -127,303 +116,293 @@ Resume:
 
 def check_template_completeness(data: dict) -> dict:
     warnings = []
-    if not data.get('NAME'):              warnings.append("Candidate name not found")
-    if not data.get('ROLE'):              warnings.append("Job title not found")
-    if not data.get('experience_years'):  warnings.append("Years of experience not specified")
-    if not data.get('COMPANY_NAME'):      warnings.append("Company name missing")
-    if not data.get('PROJECT1_NAME'):     warnings.append("Primary project not found")
+    if not data.get('NAME'):               warnings.append("Candidate name not found")
+    if not data.get('ROLE'):               warnings.append("Job title not found")
+    if not data.get('experience_years'):   warnings.append("Years of experience not specified")
+    if not data.get('COMPANY_NAME'):       warnings.append("Company name missing")
+    if not data.get('PROJECT1_NAME'):      warnings.append("Primary project not found")
     if not data.get('PROFESSIONAL_SUMMARY'): warnings.append("Professional summary missing")
-    if not data.get('HIGHEST_EDUCATION'): warnings.append("Education details not found")
+    if not data.get('HIGHEST_EDUCATION'):  warnings.append("Education details not found")
     critical = not data.get('NAME') or not data.get('COMPANY_NAME')
     return {'complete': len(warnings) == 0, 'warnings': warnings, 'has_critical_gaps': critical}
 
 
-# ── python-docx helpers ───────────────────────────────────────────────────────
+# ── Paragraph helpers ─────────────────────────────────────────────────────────
 
-def _sf(run, size=11, bold=False, italic=False, color=None, name='Arial'):
-    run.font.name  = name
-    run.font.size  = Pt(size)
-    run.font.bold  = bold
-    run.font.italic = italic
-    if color:
-        run.font.color.rgb = color
+def _clear_and_set_para(para, new_text, bold=None):
+    """
+    Replace text runs in para with new_text, preserving drawing/anchor elements.
+    Drawings (floating textboxes) live inside w:r elements with w:drawing children
+    and must NOT be removed.
+    """
+    p_elem = para._p
+    runs = p_elem.findall(qn('w:r'))
+    if not runs:
+        para.add_run(new_text)
+        return
 
+    # Separate text runs from drawing runs.
+    # Drawings can be direct w:drawing children OR wrapped in mc:AlternateContent.
+    MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
 
-def _para(container, align=WD_ALIGN_PARAGRAPH.LEFT, sb=0, sa=2):
-    p = container.add_paragraph()
-    p.alignment = align
-    p.paragraph_format.space_before = Pt(sb)
-    p.paragraph_format.space_after  = Pt(sa)
-    return p
+    def _is_drawing_run(r):
+        if r.find(qn('w:drawing')) is not None: return True
+        if r.find(qn('w:pict'))    is not None: return True
+        if r.find(f'{{{MC_NS}}}AlternateContent') is not None: return True
+        return False
 
+    text_runs    = [r for r in runs if not _is_drawing_run(r)]
+    drawing_runs = [r for r in runs if     _is_drawing_run(r)]
 
-def _add_bottom_border(para, color_hex='2E74B5', sz='6'):
-    pPr  = para._p.get_or_add_pPr()
-    pBdr = OxmlElement('w:pBdr')
-    bot  = OxmlElement('w:bottom')
-    bot.set(qn('w:val'),   'single')
-    bot.set(qn('w:sz'),    sz)
-    bot.set(qn('w:space'), '1')
-    bot.set(qn('w:color'), color_hex)
-    pBdr.append(bot)
-    pPr.append(pBdr)
+    # Capture formatting from first text run (or first run if none)
+    ref_run = text_runs[0] if text_runs else runs[0]
+    rpr = ref_run.find(qn('w:rPr'))
+    rpr_copy = copy.deepcopy(rpr) if rpr is not None else None
 
+    if bold is not None and rpr_copy is not None:
+        b_elem = rpr_copy.find(qn('w:b'))
+        if bold and b_elem is None:
+            rpr_copy.insert(0, _make_elem('w:b'))
+        elif not bold and b_elem is not None:
+            rpr_copy.remove(b_elem)
 
-def _section_heading(container, text, color=DARK_BLUE):
-    p = _para(container, sb=8, sa=2)
-    r = p.add_run(text.upper())
-    _sf(r, size=11, bold=True, color=color)
-    _add_bottom_border(p, color_hex='1F3864')
-    return p
+    # Remove ONLY text runs, keep drawing runs in place
+    for r in text_runs:
+        p_elem.remove(r)
 
+    # Build new text run and insert BEFORE first drawing run (or append if none)
+    new_r = _make_elem('w:r')
+    if rpr_copy is not None:
+        new_r.append(rpr_copy)
+    t = _make_elem('w:t')
+    t.text = new_text
+    if new_text and (new_text[0] == ' ' or new_text[-1] == ' '):
+        t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+    new_r.append(t)
 
-def _shade_cell(cell, fill_hex=SIDEBAR_BG):
-    tc   = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    shd  = OxmlElement('w:shd')
-    shd.set(qn('w:val'),   'clear')
-    shd.set(qn('w:color'), 'auto')
-    shd.set(qn('w:fill'),  fill_hex)
-    tcPr.append(shd)
-
-
-def _remove_cell_border(table):
-    """Remove all borders from a table."""
-    tbl  = table._tbl
-    tblPr = tbl.find(qn('w:tblPr'))
-    if tblPr is None:
-        tblPr = OxmlElement('w:tblPr')
-        tbl.insert(0, tblPr)
-    tblBorders = OxmlElement('w:tblBorders')
-    for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-        el = OxmlElement(f'w:{side}')
-        el.set(qn('w:val'),   'none')
-        el.set(qn('w:sz'),    '0')
-        el.set(qn('w:space'), '0')
-        el.set(qn('w:color'), 'auto')
-        tblBorders.append(el)
-    tblPr.append(tblBorders)
+    if drawing_runs:
+        drawing_runs[0].addprevious(new_r)
+    else:
+        p_elem.append(new_r)
 
 
-def _val(d, key, fallback=''):
-    v = d.get(key, fallback)
-    return str(v).strip() if v else fallback
+def _make_elem(tag):
+    from docx.oxml import OxmlElement
+    return OxmlElement(tag)
 
 
-def _bullet_para(container, text, size=11):
-    p = container.add_paragraph(style='List Bullet')
-    p.paragraph_format.space_before = Pt(1)
-    p.paragraph_format.space_after  = Pt(1)
-    r = p.add_run(text)
-    _sf(r, size=size)
-    return p
+def _set_t(t_elem, text):
+    """Set text on a w:t element, preserving xml:space if needed."""
+    t_elem.text = text
+    if text and (text[0] == ' ' or text[-1] == ' '):
+        t_elem.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+    else:
+        # Remove preserve if no longer needed
+        attr = '{http://www.w3.org/XML/1998/namespace}space'
+        if attr in t_elem.attrib:
+            del t_elem.attrib[attr]
+
+
+def _get_anchor_skill_slots(body):
+    """
+    Return list of (w:t element, current_text) for all replaceable slots
+    in the first floating anchor (sidebar with education + skills).
+    Slots 0-11 = education parts, slots 12-27 = skill items.
+    """
+    anchors = body.findall('.//' + qn('wp:anchor'))
+    if not anchors:
+        return []
+    anchor0 = anchors[0]
+    anchor0_t = anchor0.findall('.//' + qn('w:t'))
+    skip = {'ACADEMIC', 'QUALIFICATIONS', 'KEY', 'SKILLS', 'OBJECTIVE', '•', ''}
+    slots = []
+    for t in anchor0_t:
+        txt = (t.text or '').strip()
+        if txt and txt not in skip:
+            slots.append(t)
+    return slots
 
 
 # ── Main generator ─────────────────────────────────────────────────────────────
 
 def generate_resume_docx(data: dict) -> bytes | None:
     try:
-        doc = Document()
+        if not os.path.exists(TEMPLATE_PATH):
+            st.error(f"Word template not found at: {TEMPLATE_PATH}")
+            return None
 
-        # ── Page layout: Letter size, standard margins ──────────────────────
-        for sec in doc.sections:
-            sec.page_width    = Inches(8.5)
-            sec.page_height   = Inches(11.0)
-            sec.top_margin    = Inches(0.75)
-            sec.bottom_margin = Inches(0.75)
-            sec.left_margin   = Inches(0.75)
-            sec.right_margin  = Inches(0.75)
+        buf_in = io.BytesIO()
+        with open(TEMPLATE_PATH, 'rb') as f:
+            buf_in.write(f.read())
+        buf_in.seek(0)
+        doc = Document(buf_in)
+        body = doc.element.body
 
-        # ── Default style ─────────────────────────────────────────────────────
-        ns = doc.styles['Normal']
-        ns.font.name = 'Arial'
-        ns.font.size = Pt(11)
+        def v(key, fallback=''):
+            val = data.get(key, fallback)
+            return str(val).strip() if val else fallback
 
-        name    = _val(data, 'NAME',  'Candidate')
-        role    = _val(data, 'ROLE',  'Professional')
-        exp_yrs = _val(data, 'experience_years', '')
-        summary = _val(data, 'PROFESSIONAL_SUMMARY')
+        name    = v('NAME',  'Candidate Name')
+        role    = v('ROLE',  'Professional')
+        exp_yrs = v('experience_years', '')
+        summary = v('PROFESSIONAL_SUMMARY', '')
+        company = v('COMPANY_NAME', '')
+        location= v('LOCATION', '')
+        start   = v('START_DATE', '')
+        end     = v('END_DATE', '')
+        p1_name = v('PROJECT1_NAME', '')
+        p2_name = v('PROJECT2_NAME', '')
+        tech    = v('TECHNOLOGIES_USED', '')
+        edu_deg = v('HIGHEST_EDUCATION', '')
+        edu_col = v('COLLEGE_NAME', '')
+        edu_dat = v('EDUCATION_DATES', '')
 
-        # ─────────────────────────────────────────────────────────────────────
-        # HEADER: Name (centred, dark blue large) + Role (centred, grey)
-        # ─────────────────────────────────────────────────────────────────────
-        p_name = doc.add_paragraph()
-        p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_name.paragraph_format.space_before = Pt(0)
-        p_name.paragraph_format.space_after  = Pt(2)
-        r = p_name.add_run(f'\t{name.upper()}\t ')
-        _sf(r, size=20, bold=True, color=DARK_BLUE)
+        bullets1 = [v(f'ABOUT_PROJECT_BULLET_{i}') for i in range(1, 7)]
+        bullets1 = [b for b in bullets1 if b]
 
-        p_role = doc.add_paragraph()
-        p_role.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_role.paragraph_format.space_before = Pt(0)
-        p_role.paragraph_format.space_after  = Pt(0)
-        r = p_role.add_run(f'\t{role.upper()}\t ')
-        _sf(r, size=11, color=MID_GREY)
-
-        # Divider line under header
-        p_div = _para(doc, sb=4, sa=6)
-        _add_bottom_border(p_div, color_hex='2E74B5', sz='12')
-
-        # ─────────────────────────────────────────────────────────────────────
-        # TWO-COLUMN TABLE: left=main content, right=grey sidebar
-        # ─────────────────────────────────────────────────────────────────────
-        table = doc.add_table(rows=1, cols=2)
-        table.alignment = WD_TABLE_ALIGNMENT.LEFT
-        _remove_cell_border(table)
-
-        # Column widths: 65/35 split within 7 inch usable width
-        col_widths = [Inches(4.55), Inches(2.45)]
-        for i, col in enumerate(table.columns):
-            for cell in col.cells:
-                cell.width = col_widths[i]
-
-        left_cell  = table.cell(0, 0)
-        right_cell = table.cell(0, 1)
-        left_cell.vertical_alignment  = WD_ALIGN_VERTICAL.TOP
-        right_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
-        _shade_cell(right_cell)
-
-        lc = left_cell    # shorthand
-        rc = right_cell
-
-        # ── LEFT COLUMN ───────────────────────────────────────────────────────
-
-        # OBJECTIVE / Summary
-        _section_heading(lc, 'OBJECTIVE')
-        if summary:
-            p = _para(lc, sb=0, sa=4)
-            r = p.add_run(summary)
-            _sf(r, size=11)
-
-        # WORK EXPERIENCE heading
-        exp_label = f'WORK EXPERIENCE ({exp_yrs}YRS)' if exp_yrs else 'WORK EXPERIENCE'
-        _section_heading(lc, exp_label)
-
-        # Company + location
-        company  = _val(data, 'COMPANY_NAME')
-        location = _val(data, 'LOCATION')
-        if company:
-            p = _para(lc, sb=6, sa=1)
-            r1 = p.add_run(company)
-            _sf(r1, bold=True)
-            if location:
-                r2 = p.add_run(f'   {location}')
-                _sf(r2, color=LIGHT_GREY)
-
-        # Dates
-        start = _val(data, 'START_DATE')
-        end   = _val(data, 'END_DATE')
-        if start or end:
-            p = _para(lc, sb=0, sa=1)
-            r = p.add_run(f'{start}-{end}' if start and end else start or end)
-            _sf(r, bold=True, color=BLUE_DATE)
-
-        # Project 1
-        p1_name = _val(data, 'PROJECT1_NAME')
-        if p1_name:
-            p = _para(lc, sb=2, sa=1)
-            r = p.add_run(f'Project: {p1_name}')
-            _sf(r, bold=True)
-
-        for i in range(1, 7):
-            bullet = _val(data, f'ABOUT_PROJECT_BULLET_{i}')
-            if bullet:
-                _bullet_para(lc, bullet)
-
-        # Project 2
-        p2_name = _val(data, 'PROJECT2_NAME')
-        if p2_name:
-            p = _para(lc, sb=8, sa=1)
-            r = p.add_run(f'Projects: {p2_name}')
-            _sf(r, bold=True)
-
-            for i in range(1, 7):
-                bullet = _val(data, f'PROJECT2_BULLET_{i}')
-                if bullet:
-                    _bullet_para(lc, bullet)
-
-        # Technologies
-        tech_used = _val(data, 'TECHNOLOGIES_USED')
-        if tech_used:
-            p = _para(lc, sb=6, sa=4)
-            r1 = p.add_run('     Technologies: ')
-            _sf(r1, bold=True)
-            r2 = p.add_run(tech_used)
-            _sf(r2)
-
-        # ── RIGHT SIDEBAR ─────────────────────────────────────────────────────
-
-        # Remove the default empty paragraph that python-docx adds to cells
-        for para in rc.paragraphs:
-            p = para._element
-            p.getparent().remove(p)
-
-        # ACADEMIC QUALIFICATIONS
-        _section_heading(rc, 'ACADEMIC QUALIFICATIONS', color=DARK_BLUE)
-
-        highest_edu = _val(data, 'HIGHEST_EDUCATION')
-        college     = _val(data, 'COLLEGE_NAME')
-        edu_dates   = _val(data, 'EDUCATION_DATES')
-
-        for val in [highest_edu, college, edu_dates]:
-            if val:
-                p = rc.add_paragraph()
-                p.paragraph_format.space_before = Pt(2)
-                p.paragraph_format.space_after  = Pt(2)
-                r = p.add_run(val)
-                _sf(r, size=11)
-
-        # KEY SKILLS
-        p_sk = rc.add_paragraph()
-        p_sk.paragraph_format.space_before = Pt(12)
-        p_sk.paragraph_format.space_after  = Pt(2)
-        r = p_sk.add_run('KEY SKILLS')
-        _sf(r, size=11, bold=True, color=DARK_BLUE)
+        bullets2 = [v(f'PROJECT2_BULLET_{i}') for i in range(1, 6)]
+        bullets2 = [b for b in bullets2 if b]
 
         tech_stack = data.get('tech_stack') or []
         if isinstance(tech_stack, str):
             tech_stack = [s.strip() for s in tech_stack.split(',') if s.strip()]
+        tech_stack = [str(s) for s in tech_stack if s]
 
-        for skill in tech_stack[:12]:
-            if skill:
-                _bullet_para(rc, str(skill), size=10)
+        paras = doc.paragraphs
 
-        # ─────────────────────────────────────────────────────────────────────
-        # PAGE 2: SKILLS breakdown
-        # ─────────────────────────────────────────────────────────────────────
-        doc.add_page_break()
+        # ── [0] Name — set text on the actual name run (preserves bold/color/size) ──
+        name_runs = [r for r in paras[0]._p.findall(qn('w:r'))
+                     if r.find(qn('w:t')) is not None
+                     and (r.find(qn('w:t')).text or '').strip()
+                     and (r.find(qn('w:t')).text or '').strip() not in ('\t', ' ')]
+        if name_runs:
+            name_runs[0].find(qn('w:t')).text = name.upper()
+        else:
+            _clear_and_set_para(paras[0], f'\t{name.upper()}\t ')
 
-        skills_sections = [
-            ('Backend Languages',          'BACKEND_LANGUAGES'),
-            ('Containers & Orchestration', 'CONTAINERS_AND_ORCHESTRATION'),
-            ('Databases',                  'DATABASES'),
-            ('Operating Systems',          'OPERATING_SYSTEMS'),
-            ('Version Control & Tools',    'VERSION_CONTROL_TOOLS'),
-            ('Testing',                    'TESTING_TOOLS'),
+        # ── [1] Role — combine all role text runs into first, preserving style ──
+        MC_NS_R = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+        role_text_runs = [
+            r for r in paras[1]._p.findall(qn('w:r'))
+            if r.find(f'{{{MC_NS_R}}}AlternateContent') is None
+            and r.find(qn('w:drawing')) is None
+            and r.find(qn('w:t')) is not None
+            and (r.find(qn('w:t')).text or '').strip() not in ('', '\t')
         ]
+        if role_text_runs:
+            # Put role in first text run, blank out the rest
+            t0 = role_text_runs[0].find(qn('w:t'))
+            t0.text = role.upper()
+            t0.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            for r in role_text_runs[1:]:
+                t = r.find(qn('w:t'))
+                if t is not None:
+                    t.text = ' '
+        else:
+            _clear_and_set_para(paras[1], f'\t{role.upper()}\t ')
 
-        has_skills_page = any(_val(data, k) for _, k in skills_sections)
+        # ── [3] Summary ───────────────────────────────────────────────────────
+        _clear_and_set_para(paras[3], summary)
 
-        if has_skills_page:
-            _section_heading(doc, 'SKILLS')
+        # ── [5] Work Experience heading ───────────────────────────────────────
+        exp_label = f'{exp_yrs}YRS' if exp_yrs else 'N/A'
+        _clear_and_set_para(paras[5], f'WORK EXPERIENCE ({exp_label}) ', bold=True)
 
-            for label, key in skills_sections:
-                val = _val(data, key)
-                if val:
-                    p = _para(doc, sb=4, sa=0)
-                    r = p.add_run(f'{label}:')
-                    _sf(r, bold=True)
-                    p2 = _para(doc, sb=0, sa=4)
-                    r2 = p2.add_run(val)
-                    _sf(r2)
+        # ── Table: Company + Location header (grey row) ───────────────────────
+        if doc.tables:
+            cell = doc.tables[0].cell(0, 0)
+            for tp in cell.paragraphs:
+                if tp.text.strip():
+                    loc_str = f': {location}' if location else ''
+                    _clear_and_set_para(tp, f'{company}{loc_str}', bold=True)
+                    break
 
-        # ── Save ──────────────────────────────────────────────────────────────
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
-        return buf.read()
+        # ── [8] Date range ────────────────────────────────────────────────────
+        date_str = f'{start} – {end}' if start and end else start or end or ''
+        _clear_and_set_para(paras[8], f'{date_str} ')
+
+        # ── [9] Project 1 name ────────────────────────────────────────────────
+        _clear_and_set_para(paras[9], f'Project: {p1_name} ' if p1_name else 'Project: N/A ')
+
+        # ── [10–15] Project 1 bullets ─────────────────────────────────────────
+        for slot, para_idx in enumerate(range(10, 16)):
+            if para_idx < len(paras):
+                text = bullets1[slot] if slot < len(bullets1) else ''
+                _clear_and_set_para(paras[para_idx], text)
+
+        # ── [16] Project 2 name ───────────────────────────────────────────────
+        if len(paras) > 16:
+            if p2_name:
+                _clear_and_set_para(paras[16], f'Projects: {p2_name}', bold=True)
+            else:
+                _clear_and_set_para(paras[16], '')
+
+        # ── [17–21] Project 2 bullets ─────────────────────────────────────────
+        for slot, para_idx in enumerate(range(17, 22)):
+            if para_idx < len(paras):
+                text = bullets2[slot] if slot < len(bullets2) else ''
+                _clear_and_set_para(paras[para_idx], text)
+
+        # ── [23] Technologies ─────────────────────────────────────────────────
+        if len(paras) > 23:
+            _clear_and_set_para(paras[23], f'Technologies: {tech}' if tech else '')
+
+        # ── [26–37] SKILLS section (page 2 body paragraphs) ──────────────────
+        skills_order = [
+            ('BACKEND_LANGUAGES',          26, 27),
+            ('CONTAINERS_AND_ORCHESTRATION', 28, 29),
+            ('DATABASES',                  30, 31),
+            ('OPERATING_SYSTEMS',          32, 33),
+            ('VERSION_CONTROL_TOOLS',      34, 35),
+            ('TESTING_TOOLS',              36, 37),
+        ]
+        for key, label_idx, val_idx in skills_order:
+            if val_idx < len(paras):
+                _clear_and_set_para(paras[val_idx], v(key) or 'N/A')
+
+        # ── Floating anchor: Education + Key Skills (sidebar textboxes) ────────
+        # The anchor contains w:t elements split by the original template.
+        # We collect ALL non-bullet, non-header w:t elements by position and
+        # replace them. Empty text must use a space ' ' so the element survives
+        # XML serialisation — truly empty w:t nodes get stripped on save.
+
+        slots = _get_anchor_skill_slots(body)
+
+        # Education slots 0-11 (degree spread across fragments, college, dates)
+        # Strategy: put full value in first slot of each group, space others
+        edu_assignments = {
+            0: edu_deg,   # degree → slot 0 (was 'B.')
+            1: ' ',       # was 'E.'
+            2: ' ',       # was ' in Computer '
+            3: ' ',       # was 'Science '
+            4: ' ',       # was 'Engineering '
+            5: ' ',       # was 'at '
+            6: edu_col,   # college → slot 6
+            7: ' ',       # was 'Engineering & T'
+            8: ' ',       # was 'echnology'
+            9: edu_dat,   # dates → slot 9
+            10: ' ',      # was '2017'
+            11: ' ',      # was '– May 2021'
+        }
+        for slot_idx, text in edu_assignments.items():
+            if slot_idx < len(slots):
+                _set_t(slots[slot_idx], text or ' ')
+
+        # Skills: slots 12-27 → one skill per slot (16 slots available)
+        for i in range(16):
+            slot_idx = 12 + i
+            if slot_idx < len(slots):
+                skill_text = tech_stack[i] if i < len(tech_stack) else ' '
+                _set_t(slots[slot_idx], skill_text or ' ')
+
+        # Save
+        buf_out = io.BytesIO()
+        doc.save(buf_out)
+        buf_out.seek(0)
+        return buf_out.read()
 
     except Exception as e:
         st.error(f"Could not create document: {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
