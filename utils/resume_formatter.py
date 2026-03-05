@@ -11,7 +11,7 @@ import copy
 import streamlit as st
 from docx import Document
 from docx.oxml.ns import qn
-from utils.groq_client import create_groq_completion
+from utils.openai_client import create_openai_completion
 
 
 # ── Template path ─────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ TEMPLATE_PATH = os.path.join(
 # ── LLM extraction ────────────────────────────────────────────────────────────
 
 def extract_detailed_resume_data(client, resume_text: str, candidate_meta: dict) -> dict:
-    fallback_client = st.session_state.get('fallback_client')
+    
 
     prompt = f"""You are an expert resume parser. Extract ALL details from the resume below into structured JSON.
 
@@ -71,9 +71,9 @@ Resume:
 {resume_text[:7000]}"""
 
     try:
-        response = create_groq_completion(
-            client, fallback_client,
-            model="llama-3.3-70b-versatile",
+        response = create_openai_completion(
+            client,
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a precise resume parser. Return only valid JSON."},
                 {"role": "user", "content": prompt}

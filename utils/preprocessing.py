@@ -6,7 +6,7 @@ import streamlit as st
 import re
 import json
 from datetime import datetime
-from utils.groq_client import create_groq_completion
+from utils.openai_client import create_openai_completion
 
 
 def mask_pii(text):
@@ -16,9 +16,8 @@ def mask_pii(text):
     return text
 
 
-def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False, upload_date=None):
+def parse_resume_with_openai(client, resume_text, filename, mask_pii_enabled=False, upload_date=None):
     """Parse resume with optional PII masking. Uses fallback Groq key when available."""
-    fallback_client = st.session_state.get('fallback_client')
 
     # Extract email and phone BEFORE masking
     email_extracted = None
@@ -63,14 +62,14 @@ def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False
     )
 
     try:
-        chat_completion = create_groq_completion(
+        chat_completion = create_openai_completion(
             client,
             fallback_client,
             messages=[
                 {"role": "system", "content": "You are a precise resume parser. Extract ALL contact information including email and phone. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0.1,
             max_tokens=1500
         )
@@ -105,8 +104,6 @@ def parse_resume_with_groq(client, resume_text, filename, mask_pii_enabled=False
 
 def extract_jd_requirements(client, job_description):
     """Extract minimum experience and required skills from JD automatically."""
-    fallback_client = st.session_state.get('fallback_client')
-
     prompt = f"""You are a deterministic job description parser.
 
 Extract structured hiring requirements.
@@ -162,14 +159,14 @@ Return ONLY:
 }}"""
 
     try:
-        chat_completion = create_groq_completion(
+        chat_completion = create_openai_completion(
             client,
             fallback_client,
             messages=[
                 {"role": "system", "content": "You are an expert at analyzing job descriptions. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",,
             temperature=0.1,
             max_tokens=800
         )

@@ -16,7 +16,7 @@ except ImportError:
     pass
 
 from config.settings import PAGE_CONFIG, CUSTOM_CSS
-from utils.groq_client import init_groq_client
+from utils.openai_client import init_openai_client
 from ui.tabs import render_upload_tab, render_analytics_tab
 from ui.analysis_tab import render_analysis_tab
 from ui.candidate_pool_tab import render_candidate_pool_tab
@@ -65,22 +65,18 @@ for key, val in _defaults.items():
         st.session_state[key] = val
 
 
-def _init_clients():
+def _init_client():
     client = None
-    fallback_client = None
-    primary_key = os.getenv('GROQ_API_KEY', '')
-    fallback_key = os.getenv('GROQ_FALLBACK_API_KEY', '')
+
+    primary_key = os.getenv("OPENAI_API_KEY", "")
+
     if primary_key:
         try:
-            client = init_groq_client(primary_key)
+            client = init_openai_client(primary_key)
         except Exception:
             pass
-    if fallback_key:
-        try:
-            fallback_client = init_groq_client(fallback_key)
-        except Exception:
-            pass
-    return client, fallback_client
+
+    return client
 
 
 def _init_sharepoint():
@@ -112,11 +108,10 @@ def main():
     if not render_login_page():
         return   # stop here — login page is shown, app body hidden
 
-    client, fallback_client = _init_clients()
+    client = _init_client()
     _init_sharepoint()
 
     st.session_state['client'] = client
-    st.session_state['fallback_client'] = fallback_client
 
     # ── Header ─────────────────────────────────────────────────────────────────
     st.markdown('<div class="nexturn-header">', unsafe_allow_html=True)
@@ -135,7 +130,7 @@ def main():
           Resume Screening System
     </h1>
     <p style="font-size: 1.15rem; color: #666; text-align: center; margin-bottom: 10px;">
-         Powered by Groq | Automated Intelligent Recruitment
+         Powered by OpenAI | Automated Intelligent Recruitment
     </p>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -245,7 +240,7 @@ def main():
     st.divider()
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 20px;">
-        <p>AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & Groq</p>
+        <p>AI Resume Screening System | Automated Intelligent Recruitment | Built with Streamlit & OpenAI</p>
         <p style="font-size: 0.85em;">© 2026 NEXTURN. All rights reserved.</p>
     </div>
     """, unsafe_allow_html=True)

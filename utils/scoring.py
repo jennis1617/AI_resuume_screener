@@ -7,7 +7,7 @@ import pandas as pd
 import json
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from utils.groq_client import create_groq_completion
+from utils.openai_client import create_openai_completion
 
 
 def calculate_semantic_score(resume_text, jd_text):
@@ -169,14 +169,13 @@ Return JSON array with EXACTLY {actual_top_n} candidates:
 Return ONLY JSON array with EXACTLY {actual_top_n} candidates."""
 
     try:
-        chat_completion = create_groq_completion(
+        chat_completion = create_openai_completion(
             client,
-            fallback_client,
             messages=[
                 {"role": "system", "content": f"Expert technical recruiter AI. You MUST return exactly {actual_top_n} candidates."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0.3,
             max_tokens=3000
         )
@@ -214,8 +213,7 @@ Return ONLY JSON array with EXACTLY {actual_top_n} candidates."""
 
 
 def generate_interview_questions(client, candidate_data, job_description):
-    """Generate personalized interview questions. Uses fallback Groq client when available."""
-    fallback_client = st.session_state.get('fallback_client')
+    """Generate personalized interview questions."""
 
     prompt = f"""Generate 8 targeted interview questions for this candidate.
 
@@ -237,14 +235,13 @@ Return JSON:
 [{{"category": "Technical", "question": "...", "why_asking": "..."}}]"""
 
     try:
-        response = create_groq_completion(
+        response = create_openai_completion(
             client,
-            fallback_client,
             messages=[
                 {"role": "system", "content": "Interview question generator."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0.4,
             max_tokens=2000
         )

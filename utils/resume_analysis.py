@@ -3,14 +3,13 @@ Resume Quality Analysis Module
 """
 
 import json
-from utils.groq_client import create_groq_completion
+from utils.openai_client import create_openai_completion
 import streamlit as st
 
 
 class ResumeAnalyzer:
     def __init__(self, client):
         self.client = client
-        self.fallback_client = st.session_state.get('fallback_client')
 
     def analyze_resume(self, resume_text, mask_pii_enabled=False):
         """Analyze resume for quality checks and potential issues."""
@@ -44,10 +43,10 @@ class ResumeAnalyzer:
         """
         
         try:
-            response = create_groq_completion(
+            response = create_openai_completion(
                 self.client,
                 self.fallback_client,
-                model="llama-3.1-8b-instant",
+                model="gpt-4o-mini",,
                 messages=[
                     {"role": "system", "content": "You are an expert resume reviewer. Return only valid JSON with the exact structure requested."},
                     {"role": "user", "content": prompt}

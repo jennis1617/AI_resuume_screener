@@ -31,7 +31,7 @@ def render_login_page():
         "<h1 style='text-align:center; font-size:2.4rem; font-weight:900; "
         "letter-spacing:-0.5px; color:#0f172a; margin-bottom:4px;'>Resume Screening System</h1>"
         "<p style='text-align:center; color:#64748b; font-size:1rem; margin-top:0; margin-bottom:24px;'>"
-        "Powered by Groq | Automated Intelligent Recruitment</p>"
+        "Powered by OpenaAI | Automated Intelligent Recruitment</p>"
         "<hr style='border:none; border-top:2px solid #e2e8f0; margin-bottom:28px;'>",
         unsafe_allow_html=True
     )
