@@ -1,6 +1,13 @@
 """
 Candidate Review & Scoring Tab
-
+1. AI-only scoring using llama-3.3-70b-versatile
+2. Candidates sorted highest score first
+3. Info bubble rewritten as short bullet points
+4. Button renamed to 'Run AI Screening'
+5. Quality check: green/yellow 
+6. Areas of knowledge removed
+7. Word doc + PPT buttons per candidate card
+8. Spinner shows 'Adding [name] to Candidate Pool...' on checkbox
 """
 
 import json
@@ -38,8 +45,8 @@ def render_analysis_tab(parsed_resumes, client):
         </p>
         <ul style="color:#2C3E50; margin:0; padding-left:18px;
                    font-size:0.95rem; line-height:1.85;">
-            <li>Upload or Load(from SharePoint) the <strong>Job Description</strong> below</li>
-            <li>Click <strong>Run AI Screening</strong> — AI scores every resume against the JD</li>
+            <li>Paste or upload the <strong>Job Description</strong> below</li>
+            <li>Click <strong>Run AI Screening</strong> — AI scores every resume against the job</li>
             <li>Results appear ranked by score, <strong>highest first</strong></li>
             <li>☑️ Select candidates at your discretion for <strong>interview consideration</strong></li>
             <li>📋 AI generates a <strong>NexTurn-compatible</strong> structured profile document per candidate</li>
@@ -224,6 +231,7 @@ def _run_full_analysis(parsed_resumes, client, job_desc):
     """Score every candidate with AI only. Sort by score descending."""
     st.session_state.review_results = []
     st.session_state.selected_for_pool = set()
+    st.session_state.pending_pool = set()
     st.session_state.review_job_desc = job_desc
 
     # Clear cached docs so they regenerate against the new JD
@@ -278,107 +286,153 @@ def _run_full_analysis(parsed_resumes, client, job_desc):
     raw_results.sort(key=lambda x: x['final_score'], reverse=True)
     st.session_state.review_results = raw_results
 
-    st.success(f"✅ AI screening complete — {len(res_list)} candidates ranked by match score.")
-
-
-def _render_results(client):
-    results  = st.session_state.review_results
-    selected = st.session_state.selected_for_pool
-
-    st.divider()
-
-    total  = len(results)
-    chosen = len(selected)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Candidates", total)
-    c2.metric("Added to Pool",    chosen)
-    c3.metric("Still to Review",  total - chosen)
-
-    col_sel, col_desel, _ = st.columns([1, 1, 3])
-    with col_sel:
-        if st.button("✅ Select All", use_container_width=True):
-            st.session_state.selected_for_pool = {
-                r['metadata'].get('name', f"Candidate_{i}") for i, r in enumerate(results)
-            }
-            st.rerun()
-    with col_desel:
-        if st.button("☐ Clear All", use_container_width=True):
-            st.session_state.selected_for_pool = set()
-            st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader(f"📋 All {total} Candidates — ranked by AI score")
-
-    # ── Pre-generate docs silently for all candidates so download is 1-click ──
-    for idx, item in enumerate(results):
+    # ── Pre-generate all docs NOW — runs once here, never again on reruns ─────
+    status_box2 = st.empty()
+    progress2   = st.progress(0)
+    for idx, item in enumerate(raw_results):
         name    = item['metadata'].get('name', f"Candidate_{idx + 1}")
         doc_key = f"docx_bytes_{name}"
         ppt_key = f"pptx_bytes_{name}"
         det_key = f"detailed_{name}"
         chk_key = f"doc_check_{name}"
 
-        if doc_key not in st.session_state or ppt_key not in st.session_state:
-            resume_text = st.session_state.get('resume_texts', {}).get(name, str(item['metadata']))
+        status_box2.markdown(
+            f"<p style='color:#555;'>📄 Generating profile for "
+            f"<strong>{name}</strong> ({idx + 1}/{len(raw_results)})…</p>",
+            unsafe_allow_html=True
+        )
 
-            if det_key not in st.session_state:
-                try:
-                    st.session_state[det_key] = extract_detailed_resume_data(
-                        client, resume_text, item['metadata']
-                    )
-                except Exception:
-                    st.session_state[det_key] = item['metadata']
+        resume_text = st.session_state.get('resume_texts', {}).get(name, str(item['metadata']))
 
-            detailed = st.session_state[det_key]
+        if det_key not in st.session_state:
+            try:
+                st.session_state[det_key] = extract_detailed_resume_data(
+                    client, resume_text, item['metadata']
+                )
+            except Exception:
+                st.session_state[det_key] = item['metadata']
 
-            if doc_key not in st.session_state:
-                try:
-                    check = check_template_completeness(detailed)
-                    st.session_state[chk_key] = check
-                    st.session_state[doc_key] = generate_resume_docx(detailed)
-                except Exception:
-                    st.session_state[doc_key] = None
+        detailed = st.session_state[det_key]
 
-            if ppt_key not in st.session_state:
-                try:
-                    mapped = map_to_template_format(detailed)
-                    st.session_state[ppt_key] = generate_candidate_ppt({**detailed, **mapped})
-                except Exception:
-                    st.session_state[ppt_key] = None
+        if doc_key not in st.session_state:
+            try:
+                check = check_template_completeness(detailed)
+                st.session_state[chk_key] = check
+                st.session_state[doc_key] = generate_resume_docx(detailed)
+            except Exception:
+                st.session_state[doc_key] = None
 
-    # ── Render candidate cards ────────────────────────────────────────────────
+        if ppt_key not in st.session_state:
+            try:
+                mapped = map_to_template_format(detailed)
+                st.session_state[ppt_key] = generate_candidate_ppt({**detailed, **mapped})
+            except Exception:
+                st.session_state[ppt_key] = None
+
+        progress2.progress((idx + 1) / len(raw_results))
+
+    status_box2.empty()
+    progress2.empty()
+
+    st.success(f"✅ AI screening complete — {len(res_list)} candidates ranked by match score.")
+
+
+def _render_results(client):
+    results  = st.session_state.review_results
+    selected = st.session_state.selected_for_pool   # committed pool 
+
+    # ── Pending selections — live checkbox state, never triggers a rerun ──────
+    # We keep a separate "pending" set in session state that checkboxes write to.
+    # Nothing reruns until the user clicks "Move to Candidate Pool".
+    if 'pending_pool' not in st.session_state:
+        st.session_state.pending_pool = set(selected)   # pre-fill with already-committed
+
+    pending = st.session_state.pending_pool
+
+    st.divider()
+
+    total       = len(results)
+    # Metrics reflect the PENDING state so the counts update as boxes are ticked
+    pending_count   = len(pending)
+    still_to_review = total - pending_count
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Candidates", total)
+    c2.metric("Selected for Pool", pending_count)
+    c3.metric("Still to Review",   still_to_review)
+
+    # ── Select All / Clear All — update pending, rerun once ──────────────────
+    col_sel, col_desel, col_move, _ = st.columns([1, 1, 1.6, 1.4])
+    with col_sel:
+        if st.button("✅ Select All", use_container_width=True):
+            st.session_state.pending_pool = {
+                r['metadata'].get('name', f"Candidate_{i}") for i, r in enumerate(results)
+            }
+            st.rerun()
+    with col_desel:
+        if st.button("☐ Clear All", use_container_width=True):
+            st.session_state.pending_pool = set()
+            st.rerun()
+    with col_move:
+        # ── COMMIT button — the ONE rerun that matters ────────────────────────
+        move_clicked = st.button(
+            f" Move to Candidate Pool ({pending_count})",
+            type="primary",
+            use_container_width=True,
+            disabled=(pending_count == 0),
+        )
+        if move_clicked:
+            st.session_state.selected_for_pool = set(st.session_state.pending_pool)
+            st.toast(
+                f"✅ {pending_count} candidate(s) moved to pool!",
+                icon="🎉"
+            )
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader(f"📋 All {total} Candidates — ranked by AI score")
+
+    # ── Render candidate cards — checkboxes write to pending, NO heavy work ──
     for idx, item in enumerate(results):
         meta        = item['metadata']
         analysis    = item['analysis']
         final_score = item.get('final_score', 0)
         name        = meta.get('name', f"Candidate_{idx + 1}")
-        is_selected = name in selected
+        in_pending  = name in pending
+        in_pool     = name in selected
 
-        selected_tag   = "☑ Added to Pool" if is_selected else "☐ Not Selected"
+        # Tag reflects committed pool state for the label
+        if in_pool:
+            selected_tag = "☑ Added to Pool"
+        elif in_pending:
+            selected_tag = "🔲 Selected"
+        else:
+            selected_tag = "☐ Not Selected"
+
         expander_title = f"#{idx + 1}  {name}  |  🎯 {final_score}% match  |  {selected_tag}"
 
-        # ── Checkbox OUTSIDE expander so HR can select without opening card ──
+        # ── Checkbox next to card — on_change updates pending, no rerun ──────
+        def _on_change(n=name):
+            key = f"chk_{results.index(next(r for r in results if r['metadata'].get('name') == n))}"
+            if st.session_state.get(key):
+                st.session_state.pending_pool.add(n)
+            else:
+                st.session_state.pending_pool.discard(n)
+
         col_chk, col_card = st.columns([0.01, 0.99])
         with col_chk:
-            checked = st.checkbox(
+            st.checkbox(
                 f"Select {name}",
-                value=is_selected,
+                value=in_pending,
                 key=f"chk_{idx}",
-                help=f"Add {name} to the Candidate Pool",
+                help="Tick to select — click 'Move to Candidate Pool' when done",
                 label_visibility="collapsed",
+                on_change=_on_change,
             )
-            if checked and name not in st.session_state.selected_for_pool:
-                with st.spinner(f"Adding {name} to Candidate Pool…"):
-                    st.session_state.selected_for_pool.add(name)
-                st.rerun()
-            elif not checked and name in st.session_state.selected_for_pool:
-                st.session_state.selected_for_pool.discard(name)
-                st.rerun()
 
         with col_card:
-            with st.expander(expander_title, expanded=(idx == 0 and not is_selected)):
-
+            with st.expander(expander_title, expanded=(idx == 0 and not in_pending)):
                 st.markdown("<br>", unsafe_allow_html=True)
-
                 _render_score_section(meta, final_score,
                                       item.get("breakdown", {}),
                                       item.get("reason", ""))
@@ -387,12 +441,21 @@ def _render_results(client):
                 st.markdown("<br>", unsafe_allow_html=True)
                 _render_doc_buttons(client, name, meta, idx)
 
-    if selected:
+    # ── Bottom reminder if anything is pending ────────────────────────────────
+    if pending:
         st.divider()
-        st.success(
-            f"**{len(selected)}** candidate(s) in pool. "
-            "Go to the **Candidate Pool** tab to view the shortlist."
-        )
+        committed = len(selected)
+        pending_only = len(pending - selected)
+        if pending_only > 0:
+            st.info(
+                f"**{pending_only}** candidate(s) selected but not yet moved to pool. "
+                "Click **Move to Candidate Pool** above to confirm."
+            )
+        if committed > 0:
+            st.success(
+                f"**{committed}** candidate(s) already in pool. "
+                "Go to the **Candidate Pool** tab to view the shortlist."
+            )
 
 
 def _render_score_section(meta, final_score, breakdown=None, reason=""):

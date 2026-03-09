@@ -1,5 +1,6 @@
 """
 UI Tab rendering functions - Upload and Analytics only.
+Candidate Review & Scoring is in ui/analysis_tab.py
 
 """
 
@@ -65,6 +66,33 @@ def render_upload_tab():
             with st.spinner("Fetching resumes…"):
                 sp = _sp_config()
                 downloaded_files = download_from_sharepoint(sp)
+
+                # ── Apply date filter BEFORE parsing ──────────────────────────
+                use_date_filter = st.session_state.get('use_date_filter', False)
+                start_date      = st.session_state.get('start_date')
+                end_date        = st.session_state.get('end_date')
+
+                if use_date_filter and start_date and end_date and downloaded_files:
+                    filtered = []
+                    for f in downloaded_files:
+                        ts = f.get('timestamp', '')
+                        if not ts:
+                            continue
+                        try:
+                            file_date = datetime.fromisoformat(
+                                str(ts).replace('Z', '+00:00')
+                            ).date()
+                            if start_date <= file_date <= end_date:
+                                filtered.append(f)
+                        except Exception:
+                            filtered.append(f)   # keep if date unparseable
+                    total_before = len(downloaded_files)
+                    downloaded_files = filtered
+                    st.info(
+                        f"📅 Date filter applied — {len(downloaded_files)} of "
+                        f"{total_before} files match "
+                        f"({start_date.strftime('%d %b %Y')} → {end_date.strftime('%d %b %Y')})"
+                    )
 
                 if downloaded_files and client:
                     st.success(f"✅ Found {len(downloaded_files)} files in SharePoint")
@@ -138,7 +166,7 @@ def render_upload_tab():
             )
 
         if uploaded_files and client:
-            if st.button("Read All Resumes", type="primary"):
+            if st.button("🚀 Read All Resumes", type="primary"):
                 progress = st.progress(0)
                 status = st.empty()
 

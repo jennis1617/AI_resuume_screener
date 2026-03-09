@@ -28,13 +28,9 @@ st.markdown("""
 <style>
 div[data-testid="stExpander"] summary p,
 div[data-testid="stExpander"] summary span {
-    font-size: 1.18rem !important;
+    font-size: 1.08rem !important;
     font-weight: 700 !important;
     color: #111827 !important;
-}
-div[data-testid="column"] {
-    padding-left: 0rem !important;
-    padding-right: 0rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -155,7 +151,7 @@ def main():
             "</div>",
             unsafe_allow_html=True
         )
-        mask_pii_enabled = True  # always enforced — not user-configurable
+        mask_pii_enabled = True  # always enforced
 
         st.divider()
 
@@ -190,25 +186,39 @@ def main():
 
         start_date = end_date = None
         if use_date_filter:
-            col_from, col_to = st.columns(2)
-            with col_from:
-                start_date = st.date_input(
-                    "From",
-                    value=datetime.now().date() - timedelta(days=90),
-                    key="date_from"
-                )
-            with col_to:
-                end_date = st.date_input(
-                    "To",
-                    value=datetime.now().date(),
-                    key="date_to"
-                )
-            if start_date and end_date:
-                if start_date > end_date:
-                    st.error("⚠️ 'From' date cannot be after 'To' date.")
-                    start_date = end_date = None
-                else:
-                    st.info(f"📅 Showing: {start_date} to {end_date}")
+            today = datetime.now().date()
+
+            quick = st.radio(
+                "Quick select",
+                ["📅 Custom range", "⚡ Today"],
+                horizontal=True,
+                key="date_quick_select"
+            )
+
+            if quick == "⚡ Today":
+                start_date = today
+                end_date   = today
+                st.info(f"📅 Showing resumes uploaded today ({today.strftime('%d %b %Y')})")
+            else:
+                col_from, col_to = st.columns(2)
+                with col_from:
+                    start_date = st.date_input(
+                        "From",
+                        value=today - timedelta(days=90),
+                        key="date_from"
+                    )
+                with col_to:
+                    end_date = st.date_input(
+                        "To",
+                        value=today,
+                        key="date_to"
+                    )
+                if start_date and end_date:
+                    if start_date > end_date:
+                        st.error("⚠️ 'From' date cannot be after 'To' date.")
+                        start_date = end_date = None
+                    else:
+                        st.info(f"📅 Showing: {start_date.strftime('%d %b %Y')} → {end_date.strftime('%d %b %Y')}")
 
 
     st.session_state['mask_pii_enabled'] = mask_pii_enabled
