@@ -4,7 +4,7 @@ Candidate Review & Scoring Tab
 2. Candidates sorted highest score first
 3. Info bubble rewritten as short bullet points
 4. Button renamed to 'Run AI Screening'
-5. Quality check: green/yellow 
+5. Quality check: green/yellow
 6. Areas of knowledge removed
 7. Word doc + PPT buttons per candidate card
 8. Spinner shows 'Adding [name] to Candidate Pool...' on checkbox
@@ -171,7 +171,10 @@ def _render_sharepoint_jd_panel():
         if sel_my != "— select —":
             jd_obj = next(j for j in my_jds if j.get('display_name', j['name']) == sel_my)
             if st.button("📥 Load this JD", key="load_my_jd"):
-                text = download_jd_from_sharepoint(jd_obj['download_url'])
+                text = download_jd_from_sharepoint(
+                    jd_obj['download_url'],
+                    file_type=jd_obj.get('file_type', 'txt')
+                )
                 if text:
                     st.session_state['active_jd_text'] = text
                     st.success(f"✅ Loaded: {sel_my}")
@@ -191,7 +194,10 @@ def _render_sharepoint_jd_panel():
             col_load, col_del = st.columns([1, 1])
             with col_load:
                 if st.button("📥 Load this JD", key="load_other_jd"):
-                    text = download_jd_from_sharepoint(jd_obj['download_url'])
+                    text = download_jd_from_sharepoint(
+                        jd_obj['download_url'],
+                        file_type=jd_obj.get('file_type', 'txt')
+                    )
                     if text:
                         st.session_state['active_jd_text'] = text
                         st.success(f"✅ Loaded: {sel_other}")
@@ -339,7 +345,7 @@ def _run_full_analysis(parsed_resumes, client, job_desc):
 
 def _render_results(client):
     results  = st.session_state.review_results
-    selected = st.session_state.selected_for_pool   # committed pool 
+    selected = st.session_state.selected_for_pool   # committed pool
 
     # ── Pending selections — live checkbox state, never triggers a rerun ──────
     # We keep a separate "pending" set in session state that checkboxes write to.
@@ -376,7 +382,7 @@ def _render_results(client):
     with col_move:
         # ── COMMIT button — the ONE rerun that matters ────────────────────────
         move_clicked = st.button(
-            f" Move to Candidate Pool ({pending_count})",
+            f"Move to Candidate Pool ({pending_count})",
             type="primary",
             use_container_width=True,
             disabled=(pending_count == 0),

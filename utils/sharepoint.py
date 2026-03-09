@@ -264,8 +264,12 @@ def upload_jd_to_sharepoint(config: dict, jd_text: str, filename: str,
 def list_jds_from_sharepoint(config: dict) -> list:
     """
     List all JD files in SharePoint JD folder.
-    Returns list of dicts: {name, item_id, created_by, created_at}
+    Accepts .txt, .pdf, and .docx — so JDs uploaded manually via SharePoint
+    (not just through the app) are all visible.
+    Returns list of dicts: {name, display_name, uploader_tag, item_id,
+                            created_by, created_at, download_url, file_type}
     """
+    SUPPORTED = (".txt", ".pdf", ".docx")
     try:
         uploader = _make_uploader(config)
         folder = config.get("jd_folder_path", JD_FOLDER)
@@ -277,22 +281,28 @@ def list_jds_from_sharepoint(config: dict) -> list:
         jds = []
         for item in items:
             name = item.get("name", "")
-            if not name.endswith(".txt"):
+            if not any(name.lower().endswith(ext) for ext in SUPPORTED):
                 continue
+
             created_by = (item.get("createdBy", {})
                               .get("user", {})
                               .get("displayName", "Unknown"))
             created_at = item.get("createdDateTime", "")
-            # Recover the uploader tag from filename prefix (e.g. "hr_lead__JD...")
+
+            # Recover uploader tag from filename prefix (e.g. "hr_lead__JD...")
+            # Files uploaded manually via SharePoint won't have this prefix —
+            # they'll appear with uploader_tag="" which means they show up
+            # under "All Available JDs" for everyone.
             if "__" in name:
                 uploader_tag, display_name = name.split("__", 1)
             else:
                 uploader_tag, display_name = "", name
 
             jds.append({
-                "name":         name,           # full filename (used for filtering)
-                "display_name": display_name,   # clean name shown in UI
-                "uploader_tag": uploader_tag,   # e.g. "hr_lead"
+                "name":         name,
+                "display_name": display_name,
+                "uploader_tag": uploader_tag,
+                "file_type":    name.rsplit(".", 1)[-1].lower(),  # txt / pdf / docx
                 "item_id":      item.get("id", ""),
                 "created_by":   created_by,
                 "created_at":   created_at,
@@ -304,13 +314,36 @@ def list_jds_from_sharepoint(config: dict) -> list:
         return []
 
 
-def download_jd_from_sharepoint(download_url: str) -> str:
-    """Download a JD text file and return its contents as a string."""
+def download_jd_from_sharepoint(download_url: str, file_type: str = "txt") -> str:
+    """
+    Download a JD file and return its text content.
+    Handles .txt, .pdf, and .docx so manually uploaded JDs work too.
+    """
     try:
-        import requests
         response = requests.get(download_url)
         response.raise_for_status()
-        return response.text
+
+        file_type = file_type.lower().strip(".")
+
+        if file_type == "txt":
+            return response.text
+
+        elif file_type == "pdf":
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+                return "\n".join(
+                    page.extract_text() or "" for page in pdf.pages
+                ).strip()
+
+        elif file_type == "docx":
+            from docx import Document
+            doc = Document(io.BytesIO(response.content))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+        else:
+            # Unknown type — try reading as plain text
+            return response.text
+
     except Exception as e:
         st.error(f"Could not download JD: {e}")
         return ""
